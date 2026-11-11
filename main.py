@@ -529,13 +529,14 @@ async def menu_history(call: CallbackQuery):
 async def menu_profile(call: CallbackQuery):
     await call.answer()
     user = call.from_user
+    balance = await get_balance(user.id)
     await call.message.edit_text(
         "👤 <b>THÔNG TIN CÁ NHÂN</b>\n\n"
         f"🆔 Telegram ID: <code>{user.id}</code>\n"
         f"👤 Tên: {html.escape(user.full_name)}\n"
         f"🔗 Username: @{html.escape(user.username) if user.username else 'Chưa thiết lập'}\n\n"
         "📦 Dùng /orders để xem lịch sử đơn hàng.\n"
-        "💰 Số dư: Chưa được kích hoạt.",
+        f"💰 Số dư: <b>{money(balance)}</b>",
         reply_markup=back_menu()
     )
 
@@ -626,7 +627,7 @@ async def admin_cancel(message: Message):
     await message.answer("Đã hủy thao tác.")
 
 
-@dp.message(F.text)
+@dp.message(lambda message: message.from_user and message.from_user.id in ADMIN_WALLET_STATE and ADMIN_WALLET_STATE[message.from_user.id] in ("add", "sub", "check") and message.text)
 async def admin_wallet_input(message: Message):
     uid = message.from_user.id
     action = ADMIN_WALLET_STATE.get(uid)
