@@ -49,7 +49,7 @@ ADMIN_NOTIFY_TARGET = {}
 HOME_PHOTO_ID = None
 PAGE_TEXTS = {
     'topup': '💳 <b>NẠP TIỀN</b>\n\nThông tin thanh toán chưa được ADMIN cấu hình.\nVui lòng liên hệ ADMIN để được hướng dẫn. Bot chưa tự động nhận hoặc xác minh thanh toán.',
-    'guide': '❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\n\n1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\n2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\n3. Chờ ADMIN xác nhận.\n4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\n\n☎️ CSKH: @benii2k',
+    'guide': '❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\n\n1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\n\n2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\n\n3. XÁC NHẬN MUA HÀNG.\n\n4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\n\n☎️ CSKH: @benii2k',
     'referral': '🎁 <b>GIỚI THIỆU BẠN BÈ</b>\n\nChia sẻ bot với bạn bè để cùng sử dụng dịch vụ.',
     'other': '⚙️ <b>DỊCH VỤ KHÁC</b>\n\n📞 Liên hệ ADMIN: @benii2k\n🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.'
 }
