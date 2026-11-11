@@ -84,15 +84,10 @@ def main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=MENU_LABELS["profile"], callback_data="menu:profile"),
         ],
         [
-            InlineKeyboardButton(text=MENU_LABELS["other"], callback_data="menu:other"),
-            InlineKeyboardButton(text=MENU_LABELS["topup"], callback_data="menu:topup"),
-        ],
-        [
             InlineKeyboardButton(text=MENU_LABELS["referral"], callback_data="menu:referral"),
             InlineKeyboardButton(text=MENU_LABELS["support"], url=SUPPORT_URL),
         ],
         [
-            InlineKeyboardButton(text=MENU_LABELS["history"], callback_data="menu:history"),
             InlineKeyboardButton(text=MENU_LABELS["guide"], callback_data="menu:guide"),
         ],
     ])
