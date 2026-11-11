@@ -21,6 +21,29 @@ logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+MENU_LABELS = {"services":"🛍️ DỊCH VỤ","profile":"👤 CÁ NHÂN","other":"⚙️ DỊCH VỤ KHÁC","topup":"💳 NẠP TIỀN","referral":"🎁 GIỚI THIỆU","support":"☎️ CSKH","history":"📜 LỊCH SỬ","guide":"❔ HƯỚNG DẪN"}
+SUPPORT_URL = "https://t.me/benii2k"
+WELCOME_TEMPLATE = """🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>
+
+📅 Ngày: {date}
+🕒 Thời gian: {time}
+
+👋 Xin chào, {name}!
+
+🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.
+
+━━━━━━━━━━━━━━
+🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>
+🚀 <b>MINIGAME DONE NHANH</b>
+━━━━━━━━━━━━━━
+
+💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"""
+HELP_TEMPLATE = """<b>HƯỚNG DẪN SỬ DỤNG</b>
+/start - Mở menu chính
+/help - Xem hướng dẫn
+/id - Xem Telegram ID
+/orders - Xem đơn hàng
+/admin - Khu vực quản trị"""
 ADMIN_WALLET_STATE = {}
 
 SERVICES = {
@@ -49,20 +72,20 @@ def money(amount: int) -> str:
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🛍️ DỊCH VỤ", callback_data="menu:services"),
-            InlineKeyboardButton(text="👤 CÁ NHÂN", callback_data="menu:profile"),
+            InlineKeyboardButton(text=MENU_LABELS["services"], callback_data="menu:services"),
+            InlineKeyboardButton(text=MENU_LABELS["profile"], callback_data="menu:profile"),
         ],
         [
-            InlineKeyboardButton(text="⚙️ DỊCH VỤ KHÁC", callback_data="menu:other"),
-            InlineKeyboardButton(text="💳 NẠP TIỀN", callback_data="menu:topup"),
+            InlineKeyboardButton(text=MENU_LABELS["other"], callback_data="menu:other"),
+            InlineKeyboardButton(text=MENU_LABELS["topup"], callback_data="menu:topup"),
         ],
         [
-            InlineKeyboardButton(text="🎁 GIỚI THIỆU", callback_data="menu:referral"),
-            InlineKeyboardButton(text="☎️ CSKH", url="https://t.me/benii2k"),
+            InlineKeyboardButton(text=MENU_LABELS["referral"], callback_data="menu:referral"),
+            InlineKeyboardButton(text=MENU_LABELS["support"], url=SUPPORT_URL),
         ],
         [
-            InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="menu:history"),
-            InlineKeyboardButton(text="❔ HƯỚNG DẪN", callback_data="menu:guide"),
+            InlineKeyboardButton(text=MENU_LABELS["history"], callback_data="menu:history"),
+            InlineKeyboardButton(text=MENU_LABELS["guide"], callback_data="menu:guide"),
         ],
     ])
 
@@ -118,6 +141,35 @@ async def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
             amount INTEGER NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL
         )""")
+        await db.execute("CREATE TABLE IF NOT EXISTS bot_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
+        await db.execute("CREATE TABLE IF NOT EXISTS service_catalog (service_key TEXT PRIMARY KEY, service_name TEXT NOT NULL, price INTEGER NOT NULL, description TEXT NOT NULL)")
+        for key, (name, price, desc) in SERVICES.items():
+            await db.execute("INSERT OR IGNORE INTO service_catalog VALUES (?, ?, ?, ?)", (key, name, price, desc))
+        await db.commit()
+    await load_bot_settings()
+
+
+async def load_bot_settings():
+    global SUPPORT_URL, WELCOME_TEMPLATE, HELP_TEMPLATE
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT setting_key, setting_value FROM bot_settings")
+        settings = dict(await cur.fetchall())
+        cur = await db.execute("SELECT service_key, service_name, price, description FROM service_catalog")
+        service_rows = await cur.fetchall()
+    SUPPORT_URL = settings.get("support_url", SUPPORT_URL)
+    WELCOME_TEMPLATE = settings.get("welcome_text", WELCOME_TEMPLATE)
+    HELP_TEMPLATE = settings.get("help_text", HELP_TEMPLATE)
+    for key in MENU_LABELS:
+        MENU_LABELS[key] = settings.get("menu_" + key, MENU_LABELS[key])
+    if service_rows:
+        SERVICES.clear()
+        for key, name, price, desc in service_rows:
+            SERVICES[key] = (name, price, desc)
+
+
+async def save_setting(key, value):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO bot_settings VALUES (?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
         await db.commit()
 
 
@@ -629,33 +681,147 @@ async def admin_wallet_input(message: Message):
 
 
 @dp.callback_query(F.data == "admin:services")
-async def admin_services_stub(call: CallbackQuery):
+async def admin_services_menu(call: CallbackQuery):
     if not is_admin(call.from_user.id):
         await call.answer("Không có quyền.", show_alert=True)
         return
     await call.answer()
-    lines = ["🛍️ <b>DỊCH VỤ HIỆN TẠI</b>"]
-    for key, (name, price, desc) in SERVICES.items():
-        lines.append(f"<code>{key}</code> · {html.escape(name)} · {money(price)}")
-    await call.message.answer("\n".join(lines) + "\n\nChức năng sửa trực tiếp sẽ được bổ sung tiếp.")
+    rows = [[InlineKeyboardButton(text=f"✏️ {name} · {money(price)}", callback_data=f"admin:service:{key}")]
+            for key, (name, price, _) in SERVICES.items()]
+    rows.append([InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")])
+    await call.message.edit_text("🛍️ <b>CHỌN DỊCH VỤ CẦN SỬA</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("admin:service:"))
+async def admin_service_prompt(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    key = call.data.split(":", 2)[2]
+    if key not in SERVICES:
+        await call.answer("Không tìm thấy dịch vụ.", show_alert=True)
+        return
+    ADMIN_WALLET_STATE[call.from_user.id] = "service:" + key
+    await call.answer()
+    await call.message.answer("Gửi theo mẫu: <code>Tên mới | Giá mới | Mô tả mới</code>\n/cancel để hủy.")
 
 
 @dp.callback_query(F.data == "admin:buttons")
-async def admin_buttons_stub(call: CallbackQuery):
+async def admin_buttons_menu(call: CallbackQuery):
     if not is_admin(call.from_user.id):
         await call.answer("Không có quyền.", show_alert=True)
         return
     await call.answer()
-    await call.message.answer("🔘 Chức năng chỉnh tên nút và link menu đang được xây dựng.")
+    rows = [[InlineKeyboardButton(text=f"✏️ {label}", callback_data=f"admin:button:{key}")]
+            for key, label in MENU_LABELS.items()]
+    rows.append([InlineKeyboardButton(text="🔗 SỬA LINK CSKH", callback_data="admin:button:support_url")])
+    rows.append([InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")])
+    await call.message.edit_text("🔘 <b>CHỌN NÚT MENU CẦN SỬA</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.startswith("admin:button:"))
+async def admin_button_prompt(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    key = call.data.split(":", 2)[2]
+    if key == "support_url":
+        ADMIN_WALLET_STATE[call.from_user.id] = "support_url"
+        prompt = "Gửi link CSKH mới bắt đầu bằng https://"
+    elif key in MENU_LABELS:
+        ADMIN_WALLET_STATE[call.from_user.id] = "button:" + key
+        prompt = "Gửi tên mới cho nút menu."
+    else:
+        await call.answer("Không tìm thấy nút.", show_alert=True)
+        return
+    await call.answer()
+    await call.message.answer(prompt)
 
 
 @dp.callback_query(F.data == "admin:commands")
-async def admin_commands_stub(call: CallbackQuery):
+async def admin_commands_menu(call: CallbackQuery):
     if not is_admin(call.from_user.id):
         await call.answer("Không có quyền.", show_alert=True)
         return
     await call.answer()
-    await call.message.answer("📝 Chức năng chỉnh nội dung /start và /help đang được xây dựng.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ SỬA NỘI DUNG /start", callback_data="admin:command:welcome")],
+        [InlineKeyboardButton(text="✏️ SỬA NỘI DUNG /help", callback_data="admin:command:help")],
+        [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
+    ])
+    await call.message.edit_text("📝 <b>CHỈNH NỘI DUNG LỆNH</b>\n/start hỗ trợ {name}, {date}, {time}." , reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("admin:command:"))
+async def admin_command_prompt(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    key = call.data.split(":", 2)[2]
+    if key not in ("welcome", "help"):
+        await call.answer("Lệnh không hợp lệ.", show_alert=True)
+        return
+    ADMIN_WALLET_STATE[call.from_user.id] = "command:" + key
+    await call.answer()
+    await call.message.answer("Gửi toàn bộ nội dung mới. HTML Telegram được hỗ trợ. /cancel để hủy.")
+
+
+@dp.message(F.text)
+async def admin_config_input(message: Message):
+    global SUPPORT_URL, WELCOME_TEMPLATE, HELP_TEMPLATE
+    uid = message.from_user.id
+    state = ADMIN_WALLET_STATE.get(uid)
+    if not state or not is_admin(uid):
+        return
+    raw = (message.text or "").strip()
+    if raw == "/cancel":
+        ADMIN_WALLET_STATE.pop(uid, None)
+        await message.answer("Đã hủy.")
+        return
+    try:
+        if state.startswith("service:"):
+            key = state.split(":", 1)[1]
+            parts = [x.strip() for x in raw.split("|", 2)]
+            if len(parts) != 3 or not parts[1].isdigit():
+                raise ValueError("Dùng: Tên | Giá | Mô tả")
+            name, price, desc = parts[0], int(parts[1]), parts[2]
+            if not name or not desc or price < 0:
+                raise ValueError("Thông tin dịch vụ không hợp lệ.")
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("UPDATE service_catalog SET service_name=?,price=?,description=? WHERE service_key=?", (name, price, desc, key))
+                await db.commit()
+            SERVICES[key] = (name, price, desc)
+            ADMIN_WALLET_STATE.pop(uid, None)
+            await message.answer(f"✅ Đã sửa dịch vụ {html.escape(name)} · {money(price)}")
+        elif state.startswith("button:"):
+            key = state.split(":", 1)[1]
+            if len(raw) > 64:
+                raise ValueError("Tên nút tối đa 64 ký tự.")
+            await save_setting("menu_" + key, raw)
+            MENU_LABELS[key] = raw
+            ADMIN_WALLET_STATE.pop(uid, None)
+            await message.answer("✅ Đã đổi tên nút. Mở lại /start để xem.")
+        elif state == "support_url":
+            if not raw.startswith("https://"):
+                raise ValueError("Link phải bắt đầu bằng https://")
+            await save_setting("support_url", raw)
+            SUPPORT_URL = raw
+            ADMIN_WALLET_STATE.pop(uid, None)
+            await message.answer("✅ Đã đổi link CSKH. Mở lại /start để xem.")
+        elif state.startswith("command:"):
+            key = state.split(":", 1)[1]
+            if len(raw) > 3500:
+                raise ValueError("Nội dung tối đa 3500 ký tự.")
+            if key == "welcome":
+                await save_setting("welcome_text", raw)
+                WELCOME_TEMPLATE = raw
+            else:
+                await save_setting("help_text", raw)
+                HELP_TEMPLATE = raw
+            ADMIN_WALLET_STATE.pop(uid, None)
+            await message.answer("✅ Đã lưu nội dung lệnh.")
+    except ValueError as exc:
+        await message.answer("⚠️ " + html.escape(str(exc)) + "\nGửi lại đúng mẫu hoặc /cancel.")
 
 
 async def main():
