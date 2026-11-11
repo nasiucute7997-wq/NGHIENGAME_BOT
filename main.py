@@ -47,11 +47,19 @@ def money(amount: int) -> str:
 
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍️ DỊCH VỤ", callback_data="menu:services")],
-        [InlineKeyboardButton(text="💳 NẠP TIỀN", callback_data="menu:topup")],
-        [InlineKeyboardButton(text="👤 CÁ NHÂN", callback_data="menu:profile")],
-        [InlineKeyboardButton(text="🎁 GIỚI THIỆU", callback_data="menu:referral")],
-        [InlineKeyboardButton(text="⚙️ DỊCH VỤ KHÁC", callback_data="menu:other")],
+        [
+            InlineKeyboardButton(text="🛍️ DỊCH VỤ", callback_data="menu:services"),
+            InlineKeyboardButton(text="👤 CÁ NHÂN", callback_data="menu:profile"),
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ DỊCH VỤ KHÁC", callback_data="menu:other"),
+            InlineKeyboardButton(text="💳 NẠP TIỀN", callback_data="menu:topup"),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 GIỚI THIỆU", callback_data="menu:referral"),
+            InlineKeyboardButton(text="☎️ CSKH", url="https://t.me/benii2k"),
+        ],
+        [InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="menu:history")],
     ])
 
 
@@ -114,23 +122,19 @@ async def save_user(user):
         await db.commit()
 
 
-async def send_home(message: Message):
+def send_home(message: Message):
     now = datetime.now(TZ)
     first_name = html.escape(message.from_user.first_name or "Bạn")
     text = (
-        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
-        f"📅 Ngày: {now:%d/%m/%Y}\n"
-        f"🕒 Thời gian: {now:%H:%M}\n\n"
-        f"👋 Xin chào, {first_name}!\n\n"
-        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE. "
-        "Hãy chọn chức năng bên dưới để bắt đầu trải nghiệm nhé!\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "🛍️ <b>DỊCH VỤ</b>\n"
-        "💳 <b>NẠP TIỀN</b>\n"
-        "👤 <b>CÁ NHÂN</b>\n"
-        "🎁 <b>GIỚI THIỆU</b>\n"
-        "⚙️ <b>DỊCH VỤ KHÁC</b>\n"
-        "━━━━━━━━━━━━━━\n\n"
+        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\\n\\n"
+        f"📅 Ngày: {now:%d/%m/%Y}\\n"
+        f"🕒 Thời gian: {now:%H:%M}\\n\\n"
+        f"👋 Xin chào, {first_name}!\\n\\n"
+        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\\n\\n"
+        "━━━━━━━━━━━━━━\\n"
+        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\\n"
+        "🚀 <b>MINIGAME DONE NHANH</b>\\n"
+        "━━━━━━━━━━━━━━\\n\\n"
         "💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
     )
     await message.answer(text, reply_markup=main_menu())
@@ -214,14 +218,15 @@ async def menu_home(call: CallbackQuery):
     now = datetime.now(TZ)
     name = html.escape(call.from_user.first_name or "Bạn")
     text = (
-        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
-        f"📅 Ngày: {now:%d/%m/%Y}\n🕒 Thời gian: {now:%H:%M}\n\n"
-        f"👋 Xin chào, {name}!\n\n"
-        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE. "
-        "Hãy chọn chức năng bên dưới để bắt đầu trải nghiệm nhé!\n\n"
-        "━━━━━━━━━━━━━━\n🛍️ <b>DỊCH VỤ</b>\n💳 <b>NẠP TIỀN</b>\n"
-        "👤 <b>CÁ NHÂN</b>\n🎁 <b>GIỚI THIỆU</b>\n⚙️ <b>DỊCH VỤ KHÁC</b>\n"
-        "━━━━━━━━━━━━━━\n\n💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
+        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\\n\\n"
+        f"📅 Ngày: {now:%d/%m/%Y}\\n🕒 Thời gian: {now:%H:%M}\\n\\n"
+        f"👋 Xin chào, {name}!\\n\\n"
+        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\\n\\n"
+        "━━━━━━━━━━━━━━\\n"
+        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\\n"
+        "🚀 <b>MINIGAME DONE NHANH</b>\\n"
+        "━━━━━━━━━━━━━━\\n\\n"
+        "💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
     )
     await call.message.edit_text(text, reply_markup=main_menu())
 
@@ -404,6 +409,33 @@ async def menu_topup(call: CallbackQuery):
         "Bot chưa tự động nhận hoặc xác minh thanh toán.",
         reply_markup=back_menu()
     )
+
+
+@dp.callback_query(F.data == "menu:history")
+async def menu_history(call: CallbackQuery):
+    await call.answer()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, service_name, price, status, created_at FROM orders "
+            "WHERE user_id=? ORDER BY id DESC LIMIT 10",
+            (call.from_user.id,)
+        )
+        rows = await cur.fetchall()
+    if not rows:
+        await call.message.edit_text(
+            "📜 <b>LỊCH SỬ GIAO DỊCH</b>\\n\\nBạn chưa có đơn hàng nào.",
+            reply_markup=back_menu()
+        )
+        return
+    labels = {"pending": "⏳ Đang chờ ADMIN", "accepted": "✅ Đã xác nhận", "rejected": "❌ Đã từ chối"}
+    lines = ["📜 <b>LỊCH SỬ GIAO DỊCH</b>"]
+    for oid, name, price, status, created in rows:
+        lines.append(
+            f"\\n<b>Đơn #{oid}</b> · {html.escape(name)}\\n"
+            f"💰 {money(price)} · {labels.get(status, status)}\\n"
+            f"🕒 {html.escape(created)}"
+        )
+    await call.message.edit_text("\\n".join(lines), reply_markup=back_menu())
 
 
 @dp.callback_query(F.data == "menu:profile")
