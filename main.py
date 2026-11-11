@@ -59,7 +59,10 @@ def main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎁 GIỚI THIỆU", callback_data="menu:referral"),
             InlineKeyboardButton(text="☎️ CSKH", url="https://t.me/benii2k"),
         ],
-        [InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="menu:history"),\n            InlineKeyboardButton(text="❔ HƯỚNG DẪN", callback_data="menu:guide")],
+        [
+            InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="menu:history"),
+            InlineKeyboardButton(text="❔ HƯỚNG DẪN", callback_data="menu:guide"),
+        ],
     ])
 
 
@@ -122,19 +125,19 @@ async def save_user(user):
         await db.commit()
 
 
-def send_home(message: Message):
+async def send_home(message: Message):
     now = datetime.now(TZ)
     first_name = html.escape(message.from_user.first_name or "Bạn")
     text = (
-        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\\n\\n"
-        f"📅 Ngày: {now:%d/%m/%Y}\\n"
-        f"🕒 Thời gian: {now:%H:%M}\\n\\n"
-        f"👋 Xin chào, {first_name}!\\n\\n"
-        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\\n\\n"
-        "━━━━━━━━━━━━━━\\n"
-        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\\n"
-        "🚀 <b>MINIGAME DONE NHANH</b>\\n"
-        "━━━━━━━━━━━━━━\\n\\n"
+        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
+        f"📅 Ngày: {now:%d/%m/%Y}\n"
+        f"🕒 Thời gian: {now:%H:%M}\n\n"
+        f"👋 Xin chào, {first_name}!\n\n"
+        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\n"
+        "🚀 <b>MINIGAME DONE NHANH</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
         "💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
     )
     await message.answer(text, reply_markup=main_menu())
@@ -218,14 +221,14 @@ async def menu_home(call: CallbackQuery):
     now = datetime.now(TZ)
     name = html.escape(call.from_user.first_name or "Bạn")
     text = (
-        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\\n\\n"
-        f"📅 Ngày: {now:%d/%m/%Y}\\n🕒 Thời gian: {now:%H:%M}\\n\\n"
-        f"👋 Xin chào, {name}!\\n\\n"
-        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\\n\\n"
-        "━━━━━━━━━━━━━━\\n"
-        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\\n"
-        "🚀 <b>MINIGAME DONE NHANH</b>\\n"
-        "━━━━━━━━━━━━━━\\n\\n"
+        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
+        f"📅 Ngày: {now:%d/%m/%Y}\n🕒 Thời gian: {now:%H:%M}\n\n"
+        f"👋 Xin chào, {name}!\n\n"
+        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\n"
+        "🚀 <b>MINIGAME DONE NHANH</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
         "💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
     )
     await call.message.edit_text(text, reply_markup=main_menu())
@@ -415,12 +418,12 @@ async def menu_topup(call: CallbackQuery):
 async def menu_guide(call: CallbackQuery):
     await call.answer()
     await call.message.edit_text(
-        "❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\\n\\n"
-        "1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\\n"
-        "2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\\n"
-        "3. Chờ ADMIN xác nhận và liên hệ nếu cần bổ sung thông tin.\\n"
-        "4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\\n\\n"
-        "💳 Nạp tiền hiện cần ADMIN hướng dẫn/xác nhận thủ công.\\n"
+        "❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\n\n"
+        "1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\n"
+        "2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\n"
+        "3. Chờ ADMIN xác nhận và liên hệ nếu cần bổ sung thông tin.\n"
+        "4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\n\n"
+        "💳 Nạp tiền hiện cần ADMIN hướng dẫn/xác nhận thủ công.\n"
         "☎️ CSKH: @benii2k",
         reply_markup=back_menu()
     )
@@ -438,7 +441,7 @@ async def menu_history(call: CallbackQuery):
         rows = await cur.fetchall()
     if not rows:
         await call.message.edit_text(
-            "📜 <b>LỊCH SỬ GIAO DỊCH</b>\\n\\nBạn chưa có đơn hàng nào.",
+            "📜 <b>LỊCH SỬ GIAO DỊCH</b>\n\nBạn chưa có đơn hàng nào.",
             reply_markup=back_menu()
         )
         return
@@ -446,11 +449,11 @@ async def menu_history(call: CallbackQuery):
     lines = ["📜 <b>LỊCH SỬ GIAO DỊCH</b>"]
     for oid, name, price, status, created in rows:
         lines.append(
-            f"\\n<b>Đơn #{oid}</b> · {html.escape(name)}\\n"
-            f"💰 {money(price)} · {labels.get(status, status)}\\n"
+            f"\n<b>Đơn #{oid}</b> · {html.escape(name)}\n"
+            f"💰 {money(price)} · {labels.get(status, status)}\n"
             f"🕒 {html.escape(created)}"
         )
-    await call.message.edit_text("\\n".join(lines), reply_markup=back_menu())
+    await call.message.edit_text("\n".join(lines), reply_markup=back_menu())
 
 
 @dp.callback_query(F.data == "menu:profile")
