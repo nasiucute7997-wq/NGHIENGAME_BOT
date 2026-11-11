@@ -45,6 +45,7 @@ HELP_TEMPLATE = """<b>HƯỚNG DẪN SỬ DỤNG</b>
 /orders - Xem đơn hàng
 /admin - Khu vực quản trị"""
 ADMIN_WALLET_STATE = {}
+ADMIN_NOTIFY_TARGET = {}
 
 SERVICES = {
     "new88": ("NEW88", 10000, "Dịch vụ NEW88"),
@@ -254,6 +255,7 @@ async def admin_handler(message: Message):
         [InlineKeyboardButton(text="🛍️ QUẢN LÝ DỊCH VỤ", callback_data="admin:services")],
         [InlineKeyboardButton(text="🔘 CHỈNH NÚT MENU", callback_data="admin:buttons")],
         [InlineKeyboardButton(text="📝 CHỈNH LỆNH /start, /help", callback_data="admin:commands")],
+        [InlineKeyboardButton(text="📨 GỬI THÔNG BÁO USER", callback_data="admin:notify")],
         [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")],
         [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
     ])
@@ -535,6 +537,21 @@ async def menu_other(call: CallbackQuery):
 
 
 
+@dp.callback_query(F.data == "admin:notify")
+async def admin_notify_prompt(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    ADMIN_WALLET_STATE[call.from_user.id] = "notify_user_id"
+    await call.answer()
+    await call.message.answer(
+        "📨 <b>GỬI THÔNG BÁO RIÊNG</b>\\n\\n"
+        "Gửi Telegram ID của người nhận.\\n"
+        "Sau đó gửi nội dung thông báo.\\n"
+        "Dùng /cancel để hủy."
+    )
+
+
 @dp.callback_query(F.data == "admin:wallet")
 async def admin_wallet_menu(call: CallbackQuery):
     if not is_admin(call.from_user.id):
@@ -587,7 +604,11 @@ async def admin_back(call: CallbackQuery):
         return
     await call.answer()
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 CỘNG/TRỪ TIỀN", callback_data="admin:wallet")],
+        [InlineKeyboardButton(text="💰 QUẢN LÝ SỐ DƯ", callback_data="admin:wallet")],
+        [InlineKeyboardButton(text="📨 GỬI THÔNG BÁO USER", callback_data="admin:notify")],
+        [InlineKeyboardButton(text="🛍️ QUẢN LÝ DỊCH VỤ", callback_data="admin:services")],
+        [InlineKeyboardButton(text="🔘 CHỈNH NÚT MENU", callback_data="admin:buttons")],
+        [InlineKeyboardButton(text="📝 CHỈNH LỆNH /start, /help", callback_data="admin:commands")],
         [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")]
     ])
     await call.message.edit_text("🔐 <b>BẢNG ĐIỀU KHIỂN ADMIN</b>", reply_markup=kb)
@@ -749,7 +770,32 @@ async def admin_config_input(message: Message):
     raw = (message.text or "").strip()
     if raw == "/cancel":
         ADMIN_WALLET_STATE.pop(uid, None)
+        ADMIN_NOTIFY_TARGET.pop(uid, None)
         await message.answer("Đã hủy.")
+        return
+    if state == "notify_user_id":
+        if not raw.isdigit() or int(raw) <= 0:
+            await message.answer("⚠️ Telegram ID phải là số hợp lệ. Gửi lại hoặc /cancel.")
+            return
+        ADMIN_NOTIFY_TARGET[uid] = int(raw)
+        ADMIN_WALLET_STATE[uid] = "notify_message"
+        await message.answer("✍️ Gửi nội dung thông báo cần chuyển đến người dùng.")
+        return
+    if state == "notify_message":
+        target = ADMIN_NOTIFY_TARGET.get(uid)
+        if not target:
+            ADMIN_WALLET_STATE.pop(uid, None)
+            await message.answer("⚠️ Phiên gửi thông báo đã hết. Hãy thao tác lại /admin.")
+            return
+        try:
+            await message.bot.send_message(target, "📢 <b>THÔNG BÁO TỪ NGHIEN CODE</b>\\n\\n" + html.escape(raw))
+        except Exception:
+            logging.exception("Cannot send admin notification to user %s", target)
+            await message.answer("❌ Không gửi được. Người dùng có thể chưa từng nhấn /start hoặc đã chặn bot. Kiểm tra lại Telegram ID.")
+            return
+        ADMIN_WALLET_STATE.pop(uid, None)
+        ADMIN_NOTIFY_TARGET.pop(uid, None)
+        await message.answer(f"✅ Đã gửi thông báo thành công đến UID <code>{target}</code>.")
         return
     try:
         if state.startswith("service:"):
