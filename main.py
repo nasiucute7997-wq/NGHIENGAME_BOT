@@ -193,18 +193,7 @@ async def save_user(user):
 async def send_home(message: Message):
     now = datetime.now(TZ)
     first_name = html.escape(message.from_user.first_name or "Bạn")
-    text = (
-        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
-        f"📅 Ngày: {now:%d/%m/%Y}\n"
-        f"🕒 Thời gian: {now:%H:%M}\n\n"
-        f"👋 Xin chào, {first_name}!\n\n"
-        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\n"
-        "🚀 <b>MINIGAME DONE NHANH</b>\n"
-        "━━━━━━━━━━━━━━\n\n"
-        "💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
-    )
+    text = WELCOME_TEMPLATE.format(name=first_name, date=f"{now:%d/%m/%Y}", time=f"{now:%H:%M}")
     await message.answer(text, reply_markup=main_menu())
 
 
@@ -216,14 +205,7 @@ async def start_handler(message: Message):
 
 @dp.message(Command("help"))
 async def help_handler(message: Message):
-    await message.answer(
-        "<b>HƯỚNG DẪN SỬ DỤNG</b>\n"
-        "/start - Mở menu chính\n"
-        "/help - Xem hướng dẫn\n"
-        "/id - Xem Telegram ID\n"
-        "/orders - Xem đơn hàng của bạn\n"
-        "/admin - Khu vực quản trị"
-    )
+    await message.answer(HELP_TEMPLATE)
 
 
 @dp.message(Command("id"))
@@ -289,17 +271,7 @@ async def menu_home(call: CallbackQuery):
     await call.answer()
     now = datetime.now(TZ)
     name = html.escape(call.from_user.first_name or "Bạn")
-    text = (
-        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
-        f"📅 Ngày: {now:%d/%m/%Y}\n🕒 Thời gian: {now:%H:%M}\n\n"
-        f"👋 Xin chào, {name}!\n\n"
-        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.\n\n"
-        "━━━━━━━━━━━━━━\n"
-        "🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>\n"
-        "🚀 <b>MINIGAME DONE NHANH</b>\n"
-        "━━━━━━━━━━━━━━\n\n"
-        "💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
-    )
+    text = WELCOME_TEMPLATE.format(name=name, date=f"{now:%d/%m/%Y}", time=f"{now:%H:%M}")
     await call.message.edit_text(text, reply_markup=main_menu())
 
 
