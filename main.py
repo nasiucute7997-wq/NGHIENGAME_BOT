@@ -48,10 +48,10 @@ ADMIN_WALLET_STATE = {}
 ADMIN_NOTIFY_TARGET = {}
 HOME_PHOTO_ID = None
 PAGE_TEXTS = {
-    'topup': '💳 <b>NẠP TIỀN</b>\\n\\nThông tin thanh toán chưa được ADMIN cấu hình.\\nVui lòng liên hệ ADMIN để được hướng dẫn. Bot chưa tự động nhận hoặc xác minh thanh toán.',
-    'guide': '❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\\n\\n1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\\n2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\\n3. Chờ ADMIN xác nhận.\\n4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\\n\\n☎️ CSKH: @benii2k',
-    'referral': '🎁 <b>GIỚI THIỆU BẠN BÈ</b>\\n\\nChia sẻ bot với bạn bè để cùng sử dụng dịch vụ.',
-    'other': '⚙️ <b>DỊCH VỤ KHÁC</b>\\n\\n📞 Liên hệ ADMIN: @benii2k\\n🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.'
+    'topup': '💳 <b>NẠP TIỀN</b>\n\nThông tin thanh toán chưa được ADMIN cấu hình.\nVui lòng liên hệ ADMIN để được hướng dẫn. Bot chưa tự động nhận hoặc xác minh thanh toán.',
+    'guide': '❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\n\n1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\n2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\n3. Chờ ADMIN xác nhận.\n4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\n\n☎️ CSKH: @benii2k',
+    'referral': '🎁 <b>GIỚI THIỆU BẠN BÈ</b>\n\nChia sẻ bot với bạn bè để cùng sử dụng dịch vụ.',
+    'other': '⚙️ <b>DỊCH VỤ KHÁC</b>\n\n📞 Liên hệ ADMIN: @benii2k\n🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.'
 }
 
 SERVICES = {
@@ -542,9 +542,9 @@ async def admin_notify_prompt(call: CallbackQuery):
     ADMIN_WALLET_STATE[call.from_user.id] = "notify_user_id"
     await call.answer()
     await call.message.answer(
-        "📨 <b>GỬI THÔNG BÁO RIÊNG</b>\\n\\n"
-        "Gửi Telegram ID của người nhận.\\n"
-        "Sau đó gửi nội dung thông báo.\\n"
+        "📨 <b>GỬI THÔNG BÁO RIÊNG</b>\n\n"
+        "Gửi Telegram ID của người nhận.\n"
+        "Sau đó gửi nội dung thông báo.\n"
         "Dùng /cancel để hủy."
     )
 
@@ -741,7 +741,7 @@ async def admin_images_menu(call: CallbackQuery):
         [InlineKeyboardButton(text="🗑️ GỠ ẢNH /start", callback_data="admin:image:remove")],
         [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
     ])
-    await call.message.edit_text("🖼️ <b>QUẢN LÝ ẢNH BOT</b>\\n\\nẢnh được dùng ở màn hình /start. Gửi ảnh trực tiếp cho bot sau khi bấm TẢI ẢNH.", reply_markup=kb)
+    await call.message.edit_text("🖼️ <b>QUẢN LÝ ẢNH BOT</b>\n\nẢnh được dùng ở màn hình /start. Gửi ảnh trực tiếp cho bot sau khi bấm TẢI ẢNH.", reply_markup=kb)
 
 
 @dp.callback_query(F.data == "admin:image:upload")
@@ -793,7 +793,7 @@ async def admin_commands_menu(call: CallbackQuery):
         [InlineKeyboardButton(text="✏️ TRANG DỊCH VỤ KHÁC", callback_data="admin:page:other")],
         [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
     ])
-    await call.message.edit_text("📝 <b>CHỈNH VĂN BẢN BOT</b>\\n/start hỗ trợ {name}, {date}, {time}. Các trang hỗ trợ HTML Telegram.", reply_markup=kb)
+    await call.message.edit_text("📝 <b>CHỈNH VĂN BẢN BOT</b>\n/start hỗ trợ {name}, {date}, {time}. Các trang hỗ trợ HTML Telegram.", reply_markup=kb)
 
 
 @dp.callback_query(F.data.startswith("admin:page:"))
@@ -852,7 +852,7 @@ async def admin_config_input(message: Message):
             await message.answer("⚠️ Phiên gửi thông báo đã hết. Hãy thao tác lại /admin.")
             return
         try:
-            await message.bot.send_message(target, "📢 <b>THÔNG BÁO TỪ NGHIEN CODE</b>\\n\\n" + html.escape(raw))
+            await message.bot.send_message(target, "📢 <b>THÔNG BÁO TỪ NGHIEN CODE</b>\n\n" + html.escape(raw))
         except Exception:
             logging.exception("Cannot send admin notification to user %s", target)
             await message.answer("❌ Không gửi được. Người dùng có thể chưa từng nhấn /start hoặc đã chặn bot. Kiểm tra lại Telegram ID.")
