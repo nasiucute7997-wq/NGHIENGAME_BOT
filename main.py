@@ -46,6 +46,13 @@ HELP_TEMPLATE = """<b>HƯỚNG DẪN SỬ DỤNG</b>
 /admin - Khu vực quản trị"""
 ADMIN_WALLET_STATE = {}
 ADMIN_NOTIFY_TARGET = {}
+HOME_PHOTO_ID = None
+PAGE_TEXTS = {
+    'topup': '💳 <b>NẠP TIỀN</b>\\n\\nThông tin thanh toán chưa được ADMIN cấu hình.\\nVui lòng liên hệ ADMIN để được hướng dẫn. Bot chưa tự động nhận hoặc xác minh thanh toán.',
+    'guide': '❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\\n\\n1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\\n2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\\n3. Chờ ADMIN xác nhận.\\n4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\\n\\n☎️ CSKH: @benii2k',
+    'referral': '🎁 <b>GIỚI THIỆU BẠN BÈ</b>\\n\\nChia sẻ bot với bạn bè để cùng sử dụng dịch vụ.',
+    'other': '⚙️ <b>DỊCH VỤ KHÁC</b>\\n\\n📞 Liên hệ ADMIN: @benii2k\\n🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.'
+}
 
 SERVICES = {
     "new88": ("NEW88", 10000, "Dịch vụ NEW88"),
@@ -151,7 +158,7 @@ async def init_db():
 
 
 async def load_bot_settings():
-    global SUPPORT_URL, WELCOME_TEMPLATE, HELP_TEMPLATE
+    global SUPPORT_URL, WELCOME_TEMPLATE, HELP_TEMPLATE, HOME_PHOTO_ID
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT setting_key, setting_value FROM bot_settings")
         settings = dict(await cur.fetchall())
@@ -160,6 +167,9 @@ async def load_bot_settings():
     SUPPORT_URL = settings.get("support_url", SUPPORT_URL)
     WELCOME_TEMPLATE = settings.get("welcome_text", WELCOME_TEMPLATE)
     HELP_TEMPLATE = settings.get("help_text", HELP_TEMPLATE)
+    HOME_PHOTO_ID = settings.get("home_photo_id") or None
+    for key in PAGE_TEXTS:
+        PAGE_TEXTS[key] = settings.get("page_" + key, PAGE_TEXTS[key])
     for key in MENU_LABELS:
         MENU_LABELS[key] = settings.get("menu_" + key, MENU_LABELS[key])
     if service_rows:
@@ -195,7 +205,10 @@ async def send_home(message: Message):
     now = datetime.now(TZ)
     first_name = html.escape(message.from_user.first_name or "Bạn")
     text = WELCOME_TEMPLATE.format(name=first_name, date=f"{now:%d/%m/%Y}", time=f"{now:%H:%M}")
-    await message.answer(text, reply_markup=main_menu())
+    if HOME_PHOTO_ID:
+        await message.answer_photo(HOME_PHOTO_ID, caption=text, reply_markup=main_menu())
+    else:
+        await message.answer(text, reply_markup=main_menu())
 
 
 @dp.message(CommandStart())
@@ -254,7 +267,8 @@ async def admin_handler(message: Message):
         [InlineKeyboardButton(text="💰 QUẢN LÝ SỐ DƯ", callback_data="admin:wallet")],
         [InlineKeyboardButton(text="🛍️ QUẢN LÝ DỊCH VỤ", callback_data="admin:services")],
         [InlineKeyboardButton(text="🔘 CHỈNH NÚT MENU", callback_data="admin:buttons")],
-        [InlineKeyboardButton(text="📝 CHỈNH LỆNH /start, /help", callback_data="admin:commands")],
+        [InlineKeyboardButton(text="🖼️ CHỈNH ẢNH BOT", callback_data="admin:images")],
+        [InlineKeyboardButton(text="📝 CHỈNH VĂN BẢN", callback_data="admin:commands")],
         [InlineKeyboardButton(text="📨 GỬI THÔNG BÁO USER", callback_data="admin:notify")],
         [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")],
         [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
@@ -274,7 +288,14 @@ async def menu_home(call: CallbackQuery):
     now = datetime.now(TZ)
     name = html.escape(call.from_user.first_name or "Bạn")
     text = WELCOME_TEMPLATE.format(name=name, date=f"{now:%d/%m/%Y}", time=f"{now:%H:%M}")
-    await call.message.edit_text(text, reply_markup=main_menu())
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    if HOME_PHOTO_ID:
+        await call.bot.send_photo(call.message.chat.id, HOME_PHOTO_ID, caption=text, reply_markup=main_menu())
+    else:
+        await call.bot.send_message(call.message.chat.id, text, reply_markup=main_menu())
 
 
 @dp.callback_query(F.data == "menu:services")
@@ -448,28 +469,13 @@ async def admin_pending(call: CallbackQuery):
 @dp.callback_query(F.data == "menu:topup")
 async def menu_topup(call: CallbackQuery):
     await call.answer()
-    await call.message.edit_text(
-        "💳 <b>NẠP TIỀN</b>\n\n"
-        "Thông tin thanh toán chưa được ADMIN cấu hình.\n"
-        "Vui lòng liên hệ ADMIN để được hướng dẫn. "
-        "Bot chưa tự động nhận hoặc xác minh thanh toán.",
-        reply_markup=back_menu()
-    )
+    await call.message.edit_text(PAGE_TEXTS['topup'], reply_markup=back_menu())
 
 
 @dp.callback_query(F.data == "menu:guide")
 async def menu_guide(call: CallbackQuery):
     await call.answer()
-    await call.message.edit_text(
-        "❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\n\n"
-        "1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\n"
-        "2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\n"
-        "3. Chờ ADMIN xác nhận và liên hệ nếu cần bổ sung thông tin.\n"
-        "4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\n\n"
-        "💳 Nạp tiền hiện cần ADMIN hướng dẫn/xác nhận thủ công.\n"
-        "☎️ CSKH: @benii2k",
-        reply_markup=back_menu()
-    )
+    await call.message.edit_text(PAGE_TEXTS['guide'], reply_markup=back_menu())
 
 
 @dp.callback_query(F.data == "menu:history")
@@ -518,22 +524,13 @@ async def menu_profile(call: CallbackQuery):
 @dp.callback_query(F.data == "menu:referral")
 async def menu_referral(call: CallbackQuery):
     await call.answer()
-    await call.message.edit_text(
-        "🎁 <b>GIỚI THIỆU BẠN BÈ</b>\n\n"
-        "Chức năng mã giới thiệu và phần thưởng đang chờ ADMIN cấu hình.",
-        reply_markup=back_menu()
-    )
+    await call.message.edit_text(PAGE_TEXTS['referral'], reply_markup=back_menu())
 
 
 @dp.callback_query(F.data == "menu:other")
 async def menu_other(call: CallbackQuery):
     await call.answer()
-    await call.message.edit_text(
-        "⚙️ <b>DỊCH VỤ KHÁC</b>\n\n"
-        "📞 Liên hệ ADMIN: @benii2k\n"
-        "🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.",
-        reply_markup=back_menu()
-    )
+    await call.message.edit_text(PAGE_TEXTS['other'], reply_markup=back_menu())
 
 
 
@@ -608,7 +605,8 @@ async def admin_back(call: CallbackQuery):
         [InlineKeyboardButton(text="📨 GỬI THÔNG BÁO USER", callback_data="admin:notify")],
         [InlineKeyboardButton(text="🛍️ QUẢN LÝ DỊCH VỤ", callback_data="admin:services")],
         [InlineKeyboardButton(text="🔘 CHỈNH NÚT MENU", callback_data="admin:buttons")],
-        [InlineKeyboardButton(text="📝 CHỈNH LỆNH /start, /help", callback_data="admin:commands")],
+        [InlineKeyboardButton(text="🖼️ CHỈNH ẢNH BOT", callback_data="admin:images")],
+        [InlineKeyboardButton(text="📝 CHỈNH VĂN BẢN", callback_data="admin:commands")],
         [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")]
     ])
     await call.message.edit_text("🔐 <b>BẢNG ĐIỀU KHIỂN ADMIN</b>", reply_markup=kb)
@@ -732,6 +730,54 @@ async def admin_button_prompt(call: CallbackQuery):
     await call.message.answer(prompt)
 
 
+@dp.callback_query(F.data == "admin:images")
+async def admin_images_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await call.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 TẢI ẢNH /start LÊN", callback_data="admin:image:upload")],
+        [InlineKeyboardButton(text="🗑️ GỠ ẢNH /start", callback_data="admin:image:remove")],
+        [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
+    ])
+    await call.message.edit_text("🖼️ <b>QUẢN LÝ ẢNH BOT</b>\\n\\nẢnh được dùng ở màn hình /start. Gửi ảnh trực tiếp cho bot sau khi bấm TẢI ẢNH.", reply_markup=kb)
+
+
+@dp.callback_query(F.data == "admin:image:upload")
+async def admin_image_upload(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    ADMIN_WALLET_STATE[call.from_user.id] = "home_photo"
+    await call.answer()
+    await call.message.answer("📤 Gửi ảnh mới cho bot dưới dạng ẢNH (không gửi dạng tệp). /cancel để hủy.")
+
+
+@dp.callback_query(F.data == "admin:image:remove")
+async def admin_image_remove(call: CallbackQuery):
+    global HOME_PHOTO_ID
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await save_setting("home_photo_id", "")
+    HOME_PHOTO_ID = None
+    await call.answer("Đã gỡ ảnh.", show_alert=True)
+    await call.message.edit_text("✅ Đã gỡ ảnh /start. Bot sẽ hiển thị nội dung dạng văn bản.", reply_markup=back_menu())
+
+
+@dp.message(F.photo)
+async def admin_photo_input(message: Message):
+    global HOME_PHOTO_ID
+    uid = message.from_user.id
+    if not is_admin(uid) or ADMIN_WALLET_STATE.get(uid) != "home_photo":
+        return
+    HOME_PHOTO_ID = message.photo[-1].file_id
+    await save_setting("home_photo_id", HOME_PHOTO_ID)
+    ADMIN_WALLET_STATE.pop(uid, None)
+    await message.answer("✅ Đã lưu ảnh /start. Ảnh sẽ hiển thị khi người dùng mở bot.")
+
+
 @dp.callback_query(F.data == "admin:commands")
 async def admin_commands_menu(call: CallbackQuery):
     if not is_admin(call.from_user.id):
@@ -739,11 +785,29 @@ async def admin_commands_menu(call: CallbackQuery):
         return
     await call.answer()
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ SỬA NỘI DUNG /start", callback_data="admin:command:welcome")],
-        [InlineKeyboardButton(text="✏️ SỬA NỘI DUNG /help", callback_data="admin:command:help")],
+        [InlineKeyboardButton(text="✏️ NỘI DUNG /start", callback_data="admin:command:welcome")],
+        [InlineKeyboardButton(text="✏️ NỘI DUNG /help", callback_data="admin:command:help")],
+        [InlineKeyboardButton(text="✏️ TRANG NẠP TIỀN", callback_data="admin:page:topup")],
+        [InlineKeyboardButton(text="✏️ TRANG HƯỚNG DẪN", callback_data="admin:page:guide")],
+        [InlineKeyboardButton(text="✏️ TRANG GIỚI THIỆU", callback_data="admin:page:referral")],
+        [InlineKeyboardButton(text="✏️ TRANG DỊCH VỤ KHÁC", callback_data="admin:page:other")],
         [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
     ])
-    await call.message.edit_text("📝 <b>CHỈNH NỘI DUNG LỆNH</b>\n/start hỗ trợ {name}, {date}, {time}." , reply_markup=kb)
+    await call.message.edit_text("📝 <b>CHỈNH VĂN BẢN BOT</b>\\n/start hỗ trợ {name}, {date}, {time}. Các trang hỗ trợ HTML Telegram.", reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("admin:page:"))
+async def admin_page_prompt(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    key = call.data.split(":", 2)[2]
+    if key not in PAGE_TEXTS:
+        await call.answer("Trang không hợp lệ.", show_alert=True)
+        return
+    ADMIN_WALLET_STATE[call.from_user.id] = "page:" + key
+    await call.answer()
+    await call.message.answer("Gửi toàn bộ nội dung mới cho trang này. Có thể dùng HTML Telegram. /cancel để hủy.")
 
 
 @dp.callback_query(F.data.startswith("admin:command:"))
@@ -827,6 +891,14 @@ async def admin_config_input(message: Message):
             SUPPORT_URL = raw
             ADMIN_WALLET_STATE.pop(uid, None)
             await message.answer("✅ Đã đổi link CSKH. Mở lại /start để xem.")
+        elif state.startswith("page:"):
+            key = state.split(":", 1)[1]
+            if len(raw) > 3500:
+                raise ValueError("Nội dung tối đa 3500 ký tự.")
+            await save_setting("page_" + key, raw)
+            PAGE_TEXTS[key] = raw
+            ADMIN_WALLET_STATE.pop(uid, None)
+            await message.answer("✅ Đã lưu nội dung trang.")
         elif state.startswith("command:"):
             key = state.split(":", 1)[1]
             if len(raw) > 3500:
