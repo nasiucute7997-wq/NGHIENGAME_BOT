@@ -1,73 +1,459 @@
 import asyncio
+import html
 import logging
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from aiogram import Bot, Dispatcher
+import aiosqlite
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, BotCommand
+from aiogram.types import (
+    Message, CallbackQuery, BotCommand,
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
 
 from config import BOT_TOKEN, ADMIN_IDS
 
 logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
+DB_PATH = os.getenv("DB_PATH", "bot.db")
+TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+SERVICES = {
+    "new88": ("NEW88", 10000, "Dịch vụ NEW88"),
+    "xx88": ("XX88 CODE TO", 25000, "Dịch vụ XX88 CODE TO"),
+    "hi88": ("HI88", 15000, "Dịch vụ HI88"),
+    "qq88": ("QQ88", 15000, "Dịch vụ QQ88"),
+    "mb66": ("MB66", 10000, "Dịch vụ MB66"),
+    "llwin": ("LLWIN", 5000, "Dịch vụ LLWIN"),
+    "shbet": ("SHBET", 10000, "Dịch vụ SHBET"),
+    "8kbet": ("8KBET", 5000, "Dịch vụ 8KBET"),
+    "ad88_mini": ("MINIGAME AD88 - COMBO 200 ĐIỂM", 55000, "Minigame AD88, combo 200 điểm"),
+    "xx8_mini": ("MINIGAME XX8 - COMBO 200 ĐIỂM", 55000, "Minigame XX8, combo 200 điểm"),
+    "mm88_mini": ("MINIGAME MM88", 35000, "Minigame MM88"),
+}
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
+def money(amount: int) -> str:
+    return f"{amount:,}".replace(",", ".") + "đ"
+
+
+def main_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛍️ DỊCH VỤ", callback_data="menu:services")],
+        [InlineKeyboardButton(text="💳 NẠP TIỀN", callback_data="menu:topup")],
+        [InlineKeyboardButton(text="👤 CÁ NHÂN", callback_data="menu:profile")],
+        [InlineKeyboardButton(text="🎁 GIỚI THIỆU", callback_data="menu:referral")],
+        [InlineKeyboardButton(text="⚙️ DỊCH VỤ KHÁC", callback_data="menu:other")],
+    ])
+
+
+def back_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
+    ])
+
+
+def service_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for key, (name, price, _) in SERVICES.items():
+        rows.append([InlineKeyboardButton(
+            text=f"{name} · {money(price)}",
+            callback_data=f"service:{key}"
+        )])
+    rows.append([InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def init_db():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                full_name TEXT NOT NULL,
+                username TEXT,
+                joined_at TEXT NOT NULL
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                service_key TEXT NOT NULL,
+                service_name TEXT NOT NULL,
+                price INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        await db.commit()
+
+
+async def save_user(user):
+    if not user:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO users(user_id, full_name, username, joined_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                full_name=excluded.full_name,
+                username=excluded.username
+        """, (
+            user.id, user.full_name, user.username,
+            datetime.now(TZ).isoformat(timespec="seconds")
+        ))
+        await db.commit()
+
+
+async def send_home(message: Message):
+    now = datetime.now(TZ)
+    first_name = html.escape(message.from_user.first_name or "Bạn")
+    text = (
+        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
+        f"📅 Ngày: {now:%d/%m/%Y}\n"
+        f"🕒 Thời gian: {now:%H:%M}\n\n"
+        f"👋 Xin chào, {first_name}!\n\n"
+        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE. "
+        "Hãy chọn chức năng bên dưới để bắt đầu trải nghiệm nhé!\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "🛍️ <b>DỊCH VỤ</b>\n"
+        "💳 <b>NẠP TIỀN</b>\n"
+        "👤 <b>CÁ NHÂN</b>\n"
+        "🎁 <b>GIỚI THIỆU</b>\n"
+        "⚙️ <b>DỊCH VỤ KHÁC</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        "💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
+    )
+    await message.answer(text, reply_markup=main_menu())
+
+
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    name = message.from_user.full_name if message.from_user else "ban"
-    await message.answer(
-        f"Xin chao <b>{name}</b>!\n\n"
-        "Chao mung den voi <b>NGHIEN CODE</b> 🤖\n"
-        "Dung /help de xem cac lenh."
-    )
+    await save_user(message.from_user)
+    await send_home(message)
 
 
 @dp.message(Command("help"))
 async def help_handler(message: Message):
     await message.answer(
-        "<b>HUONG DAN SU DUNG</b>\n"
-        "/start - Bat dau\n"
-        "/help - Xem huong dan\n"
+        "<b>HƯỚNG DẪN SỬ DỤNG</b>\n"
+        "/start - Mở menu chính\n"
+        "/help - Xem hướng dẫn\n"
         "/id - Xem Telegram ID\n"
-        "/admin - Khu vuc quan tri"
+        "/orders - Xem đơn hàng của bạn\n"
+        "/admin - Khu vực quản trị"
     )
 
 
 @dp.message(Command("id"))
 async def id_handler(message: Message):
-    user_id = message.from_user.id if message.from_user else 0
-    await message.answer(f"Telegram ID cua ban: <code>{user_id}</code>")
+    await message.answer(f"Telegram ID của bạn: <code>{message.from_user.id}</code>")
+
+
+@dp.message(Command("orders"))
+async def orders_handler(message: Message):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, service_name, price, status, created_at FROM orders "
+            "WHERE user_id=? ORDER BY id DESC LIMIT 10",
+            (message.from_user.id,)
+        )
+        rows = await cursor.fetchall()
+    if not rows:
+        await message.answer("Bạn chưa có đơn hàng nào.", reply_markup=back_menu())
+        return
+    labels = {"pending": "⏳ Đang chờ ADMIN", "accepted": "✅ Đã xác nhận", "rejected": "❌ Đã từ chối"}
+    lines = ["<b>📦 ĐƠN HÀNG CỦA BẠN</b>"]
+    for oid, name, price, status, created in rows:
+        lines.append(
+            f"\n<b>#{oid} · {html.escape(name)}</b>\n"
+            f"Giá: {money(price)}\n"
+            f"Trạng thái: {labels.get(status, status)}\n"
+            f"Thời gian: {html.escape(created)}"
+        )
+    await message.answer("\n".join(lines), reply_markup=back_menu())
 
 
 @dp.message(Command("admin"))
 async def admin_handler(message: Message):
-    user_id = message.from_user.id if message.from_user else 0
-    if not is_admin(user_id):
-        await message.answer("⛔ Ban khong co quyen truy cap.")
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Bạn không có quyền truy cập.")
         return
-
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM users")
+        users = (await cur.fetchone())[0]
+        cur = await db.execute("SELECT COUNT(*) FROM orders WHERE status='pending'")
+        pending = (await cur.fetchone())[0]
+        cur = await db.execute("SELECT COUNT(*) FROM orders")
+        total = (await cur.fetchone())[0]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")],
+        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
+    ])
     await message.answer(
-        "✅ <b>QUAN TRI NGHIEN CODE</b>\n"
-        f"ID admin: <code>{user_id}</code>\n"
-        "Trang thai: Da xac thuc quyen admin."
+        "🔐 <b>BẢNG ĐIỀU KHIỂN ADMIN</b>\n\n"
+        f"👥 Người dùng: {users}\n"
+        f"📦 Tổng đơn: {total}\n"
+        f"⏳ Đơn đang chờ: {pending}",
+        reply_markup=kb
+    )
+
+
+@dp.callback_query(F.data == "menu:home")
+async def menu_home(call: CallbackQuery):
+    await call.answer()
+    now = datetime.now(TZ)
+    name = html.escape(call.from_user.first_name or "Bạn")
+    text = (
+        "🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>\n\n"
+        f"📅 Ngày: {now:%d/%m/%Y}\n🕒 Thời gian: {now:%H:%M}\n\n"
+        f"👋 Xin chào, {name}!\n\n"
+        "🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE. "
+        "Hãy chọn chức năng bên dưới để bắt đầu trải nghiệm nhé!\n\n"
+        "━━━━━━━━━━━━━━\n🛍️ <b>DỊCH VỤ</b>\n💳 <b>NẠP TIỀN</b>\n"
+        "👤 <b>CÁ NHÂN</b>\n🎁 <b>GIỚI THIỆU</b>\n⚙️ <b>DỊCH VỤ KHÁC</b>\n"
+        "━━━━━━━━━━━━━━\n\n💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"
+    )
+    await call.message.edit_text(text, reply_markup=main_menu())
+
+
+@dp.callback_query(F.data == "menu:services")
+async def menu_services(call: CallbackQuery):
+    await call.answer()
+    await call.message.edit_text(
+        "🛍️ <b>DANH SÁCH DỊCH VỤ</b>\n\n"
+        "🎮 <b>DỊCH VỤ CODE</b>\n"
+        + "\n".join(
+            f"• {html.escape(name)} — {money(price)}"
+            for key, (name, price, _) in list(SERVICES.items())[:8]
+        )
+        + "\n\n🎯 <b>DỊCH VỤ MINIGAME</b>\n"
+        + "\n".join(
+            f"• {html.escape(name)} — {money(price)}"
+            for key, (name, price, _) in list(SERVICES.items())[8:]
+        )
+        + "\n\nChọn dịch vụ bên dưới để xem chi tiết và tạo đơn.",
+        reply_markup=service_keyboard()
+    )
+
+
+@dp.callback_query(F.data.startswith("service:"))
+async def service_detail(call: CallbackQuery):
+    key = call.data.split(":", 1)[1]
+    if key not in SERVICES:
+        await call.answer("Dịch vụ không tồn tại.", show_alert=True)
+        return
+    name, price, description = SERVICES[key]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 ĐẶT DỊCH VỤ", callback_data=f"order:{key}")],
+        [InlineKeyboardButton(text="🔙 DANH SÁCH DỊCH VỤ", callback_data="menu:services")],
+        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
+    ])
+    await call.answer()
+    await call.message.edit_text(
+        f"📌 <b>{html.escape(name)}</b>\n\n"
+        f"📝 {html.escape(description)}\n"
+        f"💰 Giá: <b>{money(price)}</b>\n\n"
+        "Bấm ĐẶT DỊCH VỤ để gửi yêu cầu đến ADMIN. "
+        "Đơn chỉ được thực hiện sau khi ADMIN xác nhận.",
+        reply_markup=kb
+    )
+
+
+@dp.callback_query(F.data.startswith("order:"))
+async def create_order(call: CallbackQuery, bot: Bot):
+    key = call.data.split(":", 1)[1]
+    if key not in SERVICES:
+        await call.answer("Dịch vụ không tồn tại.", show_alert=True)
+        return
+    name, price, _ = SERVICES[key]
+    now = datetime.now(TZ).isoformat(timespec="seconds")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO orders(user_id, service_key, service_name, price, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+            (call.from_user.id, key, name, price, now, now)
+        )
+        order_id = cur.lastrowid
+        await db.commit()
+
+    user_label = html.escape(call.from_user.full_name)
+    username = f"@{html.escape(call.from_user.username)}" if call.from_user.username else "Không có"
+    admin_text = (
+        "🆕 <b>YÊU CẦU ĐẶT DỊCH VỤ</b>\n\n"
+        f"🧾 Mã đơn: <code>#{order_id}</code>\n"
+        f"📦 Dịch vụ: <b>{html.escape(name)}</b>\n"
+        f"💰 Giá: <b>{money(price)}</b>\n"
+        f"👤 Khách: {user_label}\n"
+        f"🔗 Username: {username}\n"
+        f"🆔 Telegram ID: <code>{call.from_user.id}</code>\n"
+        f"🕒 Thời gian: {html.escape(now)}"
+    )
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ XÁC NHẬN", callback_data=f"orderstatus:accepted:{order_id}"),
+            InlineKeyboardButton(text="❌ TỪ CHỐI", callback_data=f"orderstatus:rejected:{order_id}")
+        ]
+    ])
+    delivered = False
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
+            delivered = True
+        except Exception:
+            logging.exception("Cannot notify admin %s", admin_id)
+
+    await call.answer("Đã tạo yêu cầu đặt dịch vụ.")
+    await call.message.edit_text(
+        f"✅ <b>ĐÃ GỬI YÊU CẦU ĐẶT DỊCH VỤ</b>\n\n"
+        f"🧾 Mã đơn: <code>#{order_id}</code>\n"
+        f"📦 Dịch vụ: {html.escape(name)}\n"
+        f"💰 Giá: {money(price)}\n"
+        "⏳ Trạng thái: Đang chờ ADMIN xác nhận.\n\n"
+        + ("ADMIN đã được thông báo." if delivered else "Chưa gửi được thông báo đến ADMIN. Vui lòng liên hệ hỗ trợ.")
+        + "\n\nDùng /orders để xem trạng thái đơn.",
+        reply_markup=back_menu()
+    )
+
+
+@dp.callback_query(F.data.startswith("orderstatus:"))
+async def update_order_status(call: CallbackQuery, bot: Bot):
+    if not is_admin(call.from_user.id):
+        await call.answer("Bạn không có quyền thực hiện.", show_alert=True)
+        return
+    _, status, order_id_text = call.data.split(":")
+    if status not in ("accepted", "rejected"):
+        await call.answer("Trạng thái không hợp lệ.", show_alert=True)
+        return
+    order_id = int(order_id_text)
+    now = datetime.now(TZ).isoformat(timespec="seconds")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT user_id, service_name, status FROM orders WHERE id=?", (order_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            await call.answer("Không tìm thấy đơn hàng.", show_alert=True)
+            return
+        user_id, service_name, old_status = row
+        if old_status != "pending":
+            await call.answer("Đơn này đã được xử lý trước đó.", show_alert=True)
+            return
+        await db.execute(
+            "UPDATE orders SET status=?, updated_at=? WHERE id=? AND status='pending'",
+            (status, now, order_id)
+        )
+        await db.commit()
+
+    label = "✅ ĐÃ XÁC NHẬN" if status == "accepted" else "❌ ĐÃ TỪ CHỐI"
+    await call.answer("Đã cập nhật trạng thái đơn.")
+    await call.message.edit_text(call.message.text + f"\n\n<b>Trạng thái: {label}</b>")
+    try:
+        await bot.send_message(
+            user_id,
+            f"📦 <b>CẬP NHẬT ĐƠN HÀNG #{order_id}</b>\n"
+            f"Dịch vụ: {html.escape(service_name)}\n"
+            f"Trạng thái: {label}\n"
+            "Nếu cần hỗ trợ, vui lòng liên hệ ADMIN."
+        )
+    except Exception:
+        logging.exception("Cannot notify user for order %s", order_id)
+
+
+@dp.callback_query(F.data == "admin:pending")
+async def admin_pending(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Bạn không có quyền truy cập.", show_alert=True)
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, user_id, service_name, price, created_at FROM orders "
+            "WHERE status='pending' ORDER BY id DESC LIMIT 20"
+        )
+        rows = await cur.fetchall()
+    await call.answer()
+    if not rows:
+        await call.message.edit_text("✅ Hiện không có đơn hàng chờ xử lý.", reply_markup=back_menu())
+        return
+    lines = ["⏳ <b>DANH SÁCH ĐƠN ĐANG CHỜ</b>"]
+    for oid, uid, name, price, created in rows:
+        lines.append(
+            f"\n<b>#{oid}</b> · {html.escape(name)} · {money(price)}\n"
+            f"Khách ID: <code>{uid}</code>\n"
+            f"{html.escape(created)}"
+        )
+    await call.message.edit_text("\n".join(lines), reply_markup=back_menu())
+
+
+@dp.callback_query(F.data == "menu:topup")
+async def menu_topup(call: CallbackQuery):
+    await call.answer()
+    await call.message.edit_text(
+        "💳 <b>NẠP TIỀN</b>\n\n"
+        "Thông tin thanh toán chưa được ADMIN cấu hình.\n"
+        "Vui lòng liên hệ ADMIN để được hướng dẫn. "
+        "Bot chưa tự động nhận hoặc xác minh thanh toán.",
+        reply_markup=back_menu()
+    )
+
+
+@dp.callback_query(F.data == "menu:profile")
+async def menu_profile(call: CallbackQuery):
+    await call.answer()
+    user = call.from_user
+    await call.message.edit_text(
+        "👤 <b>THÔNG TIN CÁ NHÂN</b>\n\n"
+        f"🆔 Telegram ID: <code>{user.id}</code>\n"
+        f"👤 Tên: {html.escape(user.full_name)}\n"
+        f"🔗 Username: @{html.escape(user.username) if user.username else 'Chưa thiết lập'}\n\n"
+        "📦 Dùng /orders để xem lịch sử đơn hàng.\n"
+        "💰 Số dư: Chưa được kích hoạt.",
+        reply_markup=back_menu()
+    )
+
+
+@dp.callback_query(F.data == "menu:referral")
+async def menu_referral(call: CallbackQuery):
+    await call.answer()
+    await call.message.edit_text(
+        "🎁 <b>GIỚI THIỆU BẠN BÈ</b>\n\n"
+        "Chức năng mã giới thiệu và phần thưởng đang chờ ADMIN cấu hình.",
+        reply_markup=back_menu()
+    )
+
+
+@dp.callback_query(F.data == "menu:other")
+async def menu_other(call: CallbackQuery):
+    await call.answer()
+    await call.message.edit_text(
+        "⚙️ <b>DỊCH VỤ KHÁC</b>\n\n"
+        "📞 Liên hệ ADMIN: @benii2k\n"
+        "🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.",
+        reply_markup=back_menu()
     )
 
 
 async def main():
+    await init_db()
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     await bot.set_my_commands([
-        BotCommand(command="start", description="Bat dau"),
-        BotCommand(command="help", description="Huong dan"),
+        BotCommand(command="start", description="Mở menu chính"),
+        BotCommand(command="help", description="Hướng dẫn"),
         BotCommand(command="id", description="Xem Telegram ID"),
-        BotCommand(command="admin", description="Khu vuc quan tri"),
+        BotCommand(command="orders", description="Xem đơn hàng"),
+        BotCommand(command="admin", description="Khu vực quản trị"),
     ])
     try:
         await dp.start_polling(bot)
