@@ -510,6 +510,27 @@ async def menu_profile(call: CallbackQuery):
     await call.answer()
     user = call.from_user
     balance = await get_balance(user.id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT joined_at FROM users WHERE user_id=?", (user.id,)
+        )
+        user_row = await cur.fetchone()
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM wallet_transactions "
+            "WHERE user_id=? AND amount>0", (user.id,)
+        )
+        total_deposited = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(price), 0) FROM orders "
+            "WHERE user_id=? AND status='accepted'", (user.id,)
+        )
+        total_spent = (await cur.fetchone())[0]
+    joined_at = user_row[0] if user_row else datetime.now(TZ).isoformat(timespec="seconds")
+    try:
+        joined_display = datetime.fromisoformat(joined_at).astimezone(TZ).strftime("%d/%m/%Y %H:%M")
+    except (TypeError, ValueError):
+        joined_display = str(joined_at)
+    referred_count = 0
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 NẠP TIỀN", callback_data="profile:topup")],
         [InlineKeyboardButton(text="🛍️ LỊCH SỬ MUA HÀNG", callback_data="profile:orders")],
@@ -517,11 +538,14 @@ async def menu_profile(call: CallbackQuery):
         [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
     ])
     await call.message.edit_text(
-        "👤 <b>TRANG CÁ NHÂN</b>\n\n"
-        f"👤 Tên: {html.escape(user.full_name)}\n"
-        f"🆔 Telegram ID: <code>{user.id}</code>\n"
-        f"💰 Số dư hiện tại: <b>{money(balance)}</b>\n\n"
-        "Chọn chức năng bên dưới:",
+        "👤 <b>THÔNG TIN TÀI KHOẢN CÁ NHÂN</b>\n\n"
+        f"✨ Họ và tên: <b>{html.escape(user.full_name)}</b>\n\n"
+        f"🔗 Telegram ID: <code>{user.id}</code>\n\n"
+        f"💳 Số dư hiện tại: <b>{money(balance)}</b>\n\n"
+        f"✅ Tổng tiền đã nạp: <b>{money(total_deposited)}</b>\n\n"
+        f"❌ Tổng tiền đã chi: <b>{money(total_spent)}</b>\n\n"
+        f"⏰ Ngày tham gia: <b>{html.escape(joined_display)}</b>\n\n"
+        f"👥 Đã giới thiệu: <b>{referred_count}</b> thành viên",
         reply_markup=kb
     )
 
