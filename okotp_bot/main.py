@@ -23,24 +23,32 @@ if not BOT_TOKEN:
 
 logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
+BRANDS = ["XX8", "AD88", "U888", "ABC8", "MM88", "RR88", "XX88", "GG88"]
+SPECIAL = {"THU": "HI88", "FRI": "QQ88"}
 
-def money(n: int) -> str:
-    return f"{n:,}".replace(",", ".") + " VNĐ"
+def now():
+    return datetime.now(timezone.utc).isoformat()
 
-def admin(uid: int) -> bool:
+def money(value):
+    return f"{int(value):,}".replace(",", ".") + " VNĐ"
+
+def is_admin(uid):
     return uid in ADMIN_IDS
 
-async def connect():
+async def db_connect():
     return await aiosqlite.connect(DB_PATH)
 
 async def init_db():
-    async with await connect() as db:
+    async with await db_connect() as db:
         await db.execute("""CREATE TABLE IF NOT EXISTS users(
             user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT,
             balance INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS services(
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
             price INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1)""")
+        columns = await (await db.execute("PRAGMA table_info(services)")).fetchall()
+        if "category" not in {row[1] for row in columns}:
+            await db.execute("ALTER TABLE services ADD COLUMN category TEXT NOT NULL DEFAULT 'OTHER'")
         await db.execute("""CREATE TABLE IF NOT EXISTS orders(
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             service_id INTEGER NOT NULL, service_name TEXT NOT NULL,
@@ -50,58 +58,74 @@ async def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             amount INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS minigame_rooms(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT NOT NULL,
+            title TEXT NOT NULL, starts_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open', result TEXT DEFAULT '',
+            created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS minigame_entries(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+            UNIQUE(room_id,user_id))""")
         await db.commit()
 
 async def ensure_user(user):
-    async with await connect() as db:
+    async with await db_connect() as db:
         await db.execute("""INSERT INTO users(user_id,username,full_name,created_at)
             VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
             username=excluded.username, full_name=excluded.full_name""",
-            (user.id, user.username or "", user.full_name or "", datetime.now(timezone.utc).isoformat()))
+            (user.id, user.username or "", user.full_name or "", now()))
         await db.commit()
 
-async def balance(uid):
-    async with await connect() as db:
-        cur = await db.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-        row = await cur.fetchone()
+async def get_balance(uid):
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT balance FROM users WHERE user_id=?", (uid,))).fetchone()
         return int(row[0]) if row else 0
 
 def home_kb(uid):
     kb = InlineKeyboardBuilder()
     for label, data in [
-        ("📱 Dịch vụ OTP", "services"), ("👤 Tài khoản", "account"),
-        ("💳 Nạp số dư", "deposit"), ("📦 Đơn hàng", "orders"),
-        ("☎️ Hỗ trợ", "support")]:
+        ("🎮 CODE GAME", "cat:GAME"),
+        ("🏆 MINIGAME LIVE", "minigames"),
+        ("🧩 DỊCH VỤ KHÁC", "other_services"),
+        ("👤 Tài khoản", "account"),
+        ("💳 Nạp tiền", "deposit"),
+        ("📦 Lịch sử đơn", "orders"),
+        ("📖 Hướng dẫn", "guide"),
+        ("☎️ Liên hệ Admin", "support"),
+    ]:
         kb.button(text=label, callback_data=data)
-    if admin(uid):
-        kb.button(text="🛠 Quản trị", callback_data="admin")
-    kb.adjust(2, 2, 1, 1)
+    if is_admin(uid):
+        kb.button(text="🛠 ADMIN PANEL", callback_data="admin")
+    kb.adjust(2, 1, 2, 2, 1, 1)
     return kb.as_markup()
 
-def back_kb():
+def back_kb(target="home"):
     kb = InlineKeyboardBuilder()
-    kb.button(text="⬅️ Menu", callback_data="home")
+    kb.button(text="⬅️ Quay lại", callback_data=target)
     return kb.as_markup()
 
-async def services_kb():
-    async with await connect() as db:
-        cur = await db.execute("SELECT id,name,price FROM services WHERE active=1 ORDER BY id")
-        rows = await cur.fetchall()
+async def service_keyboard(category):
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,name,price FROM services WHERE active=1 AND category=? ORDER BY id",
+            (category,))).fetchall()
     kb = InlineKeyboardBuilder()
     for sid, name, price in rows:
         kb.button(text=f"{name} · {money(price)}", callback_data=f"buy:{sid}")
-    kb.button(text="⬅️ Menu", callback_data="home")
+    kb.button(text="⬅️ Menu chính", callback_data="home")
     kb.adjust(1)
     return kb.as_markup(), rows
 
-async def show_orders(uid, send):
-    async with await connect() as db:
-        cur = await db.execute("SELECT id,service_name,price,status FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 10", (uid,))
-        rows = await cur.fetchall()
+async def send_orders(uid, send):
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,service_name,price,status FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 10",
+            (uid,))).fetchall()
     if not rows:
         await send("Bạn chưa có đơn hàng nào.")
         return
-    lines = ["📦 <b>ĐƠN HÀNG GẦN ĐÂY</b>"]
+    lines = ["📦 <b>LỊCH SỬ ĐƠN HÀNG</b>"]
     for oid, name, price, status in rows:
         lines.append(f"#{oid} · {escape(name)} · {money(price)} · <b>{escape(status)}</b>")
     await send("\n".join(lines))
@@ -109,7 +133,7 @@ async def show_orders(uid, send):
 @dp.message(CommandStart())
 async def start(m: Message):
     await ensure_user(m.from_user)
-    await m.answer("🎉 <b>CHÀO MỪNG ĐẾN VỚI BOT DỊCH VỤ OTP</b>\n\nChọn chức năng bên dưới. Chỉ sử dụng mã xác minh cho tài khoản/dịch vụ bạn sở hữu hoặc được phép xác minh.", reply_markup=home_kb(m.from_user.id))
+    await m.answer("🎉 <b>CHÀO MỪNG ĐẾN VỚI NGHIỆN CODE BOT</b>\n\nChọn danh mục bạn cần bên dưới.", reply_markup=home_kb(m.from_user.id))
 
 @dp.message(Command("menu"))
 async def menu(m: Message):
@@ -119,40 +143,35 @@ async def menu(m: Message):
 @dp.message(Command("balance"))
 async def balance_cmd(m: Message):
     await ensure_user(m.from_user)
-    await m.answer(f"💰 Số dư: <b>{money(await balance(m.from_user.id))}</b>")
+    await m.answer(f"💰 Số dư: <b>{money(await get_balance(m.from_user.id))}</b>")
 
 @dp.message(Command("services"))
 async def services_cmd(m: Message):
-    await ensure_user(m.from_user)
-    kb, rows = await services_kb()
-    await m.answer("📱 <b>DANH SÁCH DỊCH VỤ</b>" if rows else "Hiện chưa có dịch vụ.", reply_markup=kb)
+    kb, rows = await service_keyboard("OTHER")
+    await m.answer("🧩 <b>DỊCH VỤ KHÁC</b>" if rows else "Chưa có sản phẩm. Vui lòng quay lại sau.", reply_markup=kb)
 
 @dp.message(Command("orders"))
 async def orders_cmd(m: Message):
     await ensure_user(m.from_user)
-    await show_orders(m.from_user.id, m.answer)
-
-@dp.message(Command("deposit"))
-async def deposit_cmd(m: Message):
-    await m.answer("Tạo yêu cầu nạp bằng cú pháp: <code>/nap 50000</code>. Admin sẽ kiểm tra và duyệt thủ công.")
+    await send_orders(m.from_user.id, m.answer)
 
 @dp.message(Command("nap"))
 async def deposit_request(m: Message):
     await ensure_user(m.from_user)
-    p = (m.text or "").split()
-    if len(p) != 2 or not p[1].isdigit():
+    parts = (m.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
         await m.answer("Cú pháp: <code>/nap 50000</code>")
         return
-    amount = int(p[1])
+    amount = int(parts[1])
     if not 10000 <= amount <= 100000000:
         await m.answer("Số tiền phải từ 10.000 đến 100.000.000 VNĐ.")
         return
-    async with await connect() as db:
+    async with await db_connect() as db:
         cur = await db.execute("INSERT INTO deposits(user_id,amount,created_at) VALUES(?,?,?)",
-            (m.from_user.id, amount, datetime.now(timezone.utc).isoformat()))
+                               (m.from_user.id, amount, now()))
         dep_id = cur.lastrowid
         await db.commit()
-    await m.answer(f"✅ Đã tạo yêu cầu nạp #{dep_id}: <b>{money(amount)}</b>. Chờ admin xác nhận.")
+    await m.answer(f"✅ Đã tạo yêu cầu nạp #{dep_id}: <b>{money(amount)}</b>. Chờ Admin xác nhận.")
     for aid in ADMIN_IDS:
         try:
             await m.bot.send_message(aid, f"💳 Yêu cầu nạp #{dep_id}\nUser: <code>{m.from_user.id}</code>\nSố tiền: <b>{money(amount)}</b>\nDuyệt: <code>/duyetnap {dep_id}</code> · Từ chối: <code>/huy nap {dep_id}</code>")
@@ -164,41 +183,169 @@ async def cb_home(c: CallbackQuery):
     await c.message.edit_text("🏠 <b>MENU CHÍNH</b>", reply_markup=home_kb(c.from_user.id))
     await c.answer()
 
-@dp.callback_query(F.data == "services")
-async def cb_services(c: CallbackQuery):
-    kb, rows = await services_kb()
-    await c.message.edit_text("📱 <b>DANH SÁCH DỊCH VỤ</b>" if rows else "Hiện chưa có dịch vụ.", reply_markup=kb)
+@dp.callback_query(F.data == "cat:GAME")
+async def cb_game(c: CallbackQuery):
+    kb, rows = await service_keyboard("GAME")
+    await c.message.edit_text("🎮 <b>CODE GAME</b>\nChọn sản phẩm cần mua." if rows else "🎮 <b>CODE GAME</b>\nHiện chưa có code trong kho.", reply_markup=kb)
     await c.answer()
+
+@dp.callback_query(F.data == "other_services")
+async def cb_other(c: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📩 SMS – dịch vụ gửi/nhận hợp pháp", callback_data="cat:SMS")
+    kb.button(text="🌐 PRX – Proxy", callback_data="cat:PRX")
+    kb.button(text="⬅️ Menu chính", callback_data="home")
+    kb.adjust(1)
+    await c.message.edit_text("🧩 <b>DỊCH VỤ KHÁC</b>\nChọn nhóm dịch vụ.", reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("cat:"))
+async def cb_category(c: CallbackQuery):
+    category = c.data.split(":", 1)[1]
+    if category not in {"SMS", "PRX"}:
+        await c.answer("Danh mục không hợp lệ.", show_alert=True)
+        return
+    kb, rows = await service_keyboard(category)
+    title = "📩 SMS" if category == "SMS" else "🌐 PRX – PROXY"
+    await c.message.edit_text(f"<b>{title}</b>\nChọn sản phẩm." if rows else f"<b>{title}</b>\nHiện chưa có sản phẩm.", reply_markup=kb)
+    await c.answer()
+
+@dp.callback_query(F.data == "minigames")
+async def cb_minigames(c: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    for brand in BRANDS:
+        kb.button(text=f"🎯 MINIGAME {brand}", callback_data=f"mg:{brand}")
+    kb.button(text="⭐ MINIGAME HI88 · THỨ 5", callback_data="mg:HI88")
+    kb.button(text="⭐ MINIGAME QQ88 · THỨ 6", callback_data="mg:QQ88")
+    kb.button(text="📋 Phòng đang mở", callback_data="rooms")
+    kb.button(text="⬅️ Menu chính", callback_data="home")
+    kb.adjust(2, 2, 2, 2, 1, 1, 1)
+    await c.message.edit_text("🏆 <b>MINIGAME LIVE</b>\n\n<b>Danh sách thường:</b> XX8 · AD88 · U888 · ABC8 · MM88 · RR88 · XX88 · GG88\n\n<b>Đặc biệt:</b> Thứ 5 – HI88 | Thứ 6 – QQ88", reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("mg:"))
+async def cb_brand(c: CallbackQuery):
+    brand = c.data.split(":", 1)[1]
+    async with await db_connect() as db:
+        rooms = await (await db.execute(
+            "SELECT id,title,starts_at,status FROM minigame_rooms WHERE brand=? ORDER BY id DESC LIMIT 10",
+            (brand,))).fetchall()
+    kb = InlineKeyboardBuilder()
+    for rid, title, starts, status in rooms:
+        kb.button(text=f"#{rid} · {title} · {status}", callback_data=f"room:{rid}")
+    kb.button(text="⬅️ Danh sách Minigame", callback_data="minigames")
+    kb.adjust(1)
+    lines = [f"🎯 <b>MINIGAME {escape(brand)}</b>"]
+    if brand == "HI88":
+        lines.append("Lịch đặc biệt: Thứ 5")
+    if brand == "QQ88":
+        lines.append("Lịch đặc biệt: Thứ 6")
+    lines.append("Chưa có phòng được Admin tạo." if not rooms else "Chọn phòng để xem chi tiết.")
+    await c.message.edit_text("\n".join(lines), reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data == "rooms")
+async def cb_rooms(c: CallbackQuery):
+    async with await db_connect() as db:
+        rooms = await (await db.execute(
+            "SELECT id,brand,title,starts_at,status FROM minigame_rooms WHERE status IN ('open','full') ORDER BY starts_at LIMIT 20")).fetchall()
+    kb = InlineKeyboardBuilder()
+    for rid, brand, title, starts, status in rooms:
+        kb.button(text=f"{brand} · #{rid} · {title}", callback_data=f"room:{rid}")
+    kb.button(text="⬅️ Minigame", callback_data="minigames")
+    kb.adjust(1)
+    await c.message.edit_text("📋 <b>PHÒNG ĐANG MỞ</b>" if rooms else "Hiện chưa có phòng đang mở.", reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("room:"))
+async def cb_room(c: CallbackQuery):
+    try:
+        rid = int(c.data.split(":", 1)[1])
+    except ValueError:
+        await c.answer("Phòng không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        room = await (await db.execute(
+            "SELECT brand,title,starts_at,status,result FROM minigame_rooms WHERE id=?", (rid,))).fetchone()
+        count = await (await db.execute("SELECT COUNT(*) FROM minigame_entries WHERE room_id=?", (rid,))).fetchone()
+    if not room:
+        await c.answer("Không tìm thấy phòng.", show_alert=True)
+        return
+    brand, title, starts, status, result = room
+    kb = InlineKeyboardBuilder()
+    if status == "open":
+        kb.button(text="📝 Đăng ký tham gia", callback_data=f"join:{rid}")
+    kb.button(text="⬅️ Danh sách Minigame", callback_data=f"mg:{brand}")
+    kb.adjust(1)
+    body = f"🎯 <b>{escape(brand)} – {escape(title)}</b>\nThời gian: {escape(starts)}\nTrạng thái: <b>{escape(status)}</b>\nSố người đăng ký: <b>{count[0]}</b>"
+    if result:
+        body += f"\n\n🏁 <b>KẾT QUẢ</b>\n{escape(result)}"
+    await c.message.edit_text(body, reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("join:"))
+async def cb_join(c: CallbackQuery):
+    try:
+        rid = int(c.data.split(":", 1)[1])
+    except ValueError:
+        await c.answer("Mã phòng không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        room = await (await db.execute("SELECT status FROM minigame_rooms WHERE id=?", (rid,))).fetchone()
+        if not room or room[0] != "open":
+            await c.answer("Phòng đã đóng đăng ký hoặc không tồn tại.", show_alert=True)
+            return
+        try:
+            await db.execute("INSERT INTO minigame_entries(room_id,user_id,created_at) VALUES(?,?,?)",
+                             (rid, c.from_user.id, now()))
+            await db.commit()
+        except aiosqlite.IntegrityError:
+            await c.answer("Bạn đã đăng ký phòng này rồi.", show_alert=True)
+            return
+    await c.answer("Đăng ký thành công!", show_alert=True)
+    await cb_room(c)
 
 @dp.callback_query(F.data == "account")
 async def cb_account(c: CallbackQuery):
     await ensure_user(c.from_user)
     username = "@" + c.from_user.username if c.from_user.username else "Chưa đặt"
-    await c.message.edit_text(f"👤 <b>THÔNG TIN TÀI KHOẢN</b>\n\nID: <code>{c.from_user.id}</code>\nTên: {escape(c.from_user.full_name)}\nUsername: {escape(username)}\nSố dư: <b>{money(await balance(c.from_user.id))}</b>", reply_markup=back_kb())
+    await c.message.edit_text(
+        f"👤 <b>THÔNG TIN TÀI KHOẢN</b>\n\nID: <code>{c.from_user.id}</code>\nTên: {escape(c.from_user.full_name)}\nUsername: {escape(username)}\nSố dư: <b>{money(await get_balance(c.from_user.id))}</b>",
+        reply_markup=back_kb())
     await c.answer()
 
 @dp.callback_query(F.data == "deposit")
 async def cb_deposit(c: CallbackQuery):
-    await c.message.edit_text("💳 <b>NẠP SỐ DƯ</b>\nGửi lệnh <code>/nap 50000</code>. Admin sẽ kiểm tra thủ công.", reply_markup=back_kb())
+    await c.message.edit_text("💳 <b>NẠP TIỀN</b>\nGửi lệnh <code>/nap 50000</code> để tạo yêu cầu. Admin xác nhận thủ công.", reply_markup=back_kb())
     await c.answer()
 
 @dp.callback_query(F.data == "orders")
 async def cb_orders(c: CallbackQuery):
     await c.answer()
-    await show_orders(c.from_user.id, c.message.answer)
+    await send_orders(c.from_user.id, c.message.answer)
+
+@dp.callback_query(F.data == "guide")
+async def cb_guide(c: CallbackQuery):
+    await c.message.edit_text("📖 <b>HƯỚNG DẪN</b>\n1. Chọn danh mục.\n2. Chọn sản phẩm/phòng Minigame.\n3. Xác nhận yêu cầu.\n4. Theo dõi trạng thái tại Lịch sử đơn hoặc phòng Minigame.\n\nDịch vụ SMS chỉ dùng cho hệ thống bạn sở hữu/được ủy quyền. Proxy phải có nguồn cung hợp pháp.", reply_markup=back_kb())
+    await c.answer()
 
 @dp.callback_query(F.data == "support")
 async def cb_support(c: CallbackQuery):
-    contact = "@" + SUPPORT_USERNAME.lstrip("@") if SUPPORT_USERNAME else "Vui lòng liên hệ admin."
-    await c.message.edit_text(f"☎️ <b>HỖ TRỢ</b>\n{escape(contact)}", reply_markup=back_kb())
+    contact = "@" + SUPPORT_USERNAME.lstrip("@") if SUPPORT_USERNAME else "Vui lòng liên hệ Admin."
+    await c.message.edit_text(f"☎️ <b>LIÊN HỆ HỖ TRỢ</b>\n{escape(contact)}", reply_markup=back_kb())
     await c.answer()
 
 @dp.callback_query(F.data == "admin")
 async def cb_admin(c: CallbackQuery):
-    if not admin(c.from_user.id):
+    if not is_admin(c.from_user.id):
         await c.answer("Không có quyền truy cập.", show_alert=True)
         return
-    await c.message.edit_text("🛠 <b>QUẢN TRỊ</b>\n/addservice Tên dịch vụ|Giá\n/delservice ID\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats", reply_markup=back_kb())
+    await c.message.edit_text(
+        "🛠 <b>ADMIN PANEL – LỆNH QUẢN LÝ</b>\n\n"
+        "<b>Sản phẩm:</b>\n/addservice GAME|Tên code|Giá\n/addservice SMS|Tên dịch vụ|Giá\n/addservice PRX|Tên proxy|Giá\n/delservice ID\n\n"
+        "<b>Minigame:</b>\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\n/roomstatus ID|open hoặc closed\n/result ID|Nội dung kết quả\n/roomsadmin\n\n"
+        "<b>Tài khoản & nạp:</b>\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats",
+        reply_markup=back_kb())
     await c.answer()
 
 @dp.callback_query(F.data.startswith("buy:"))
@@ -207,131 +354,214 @@ async def cb_buy(c: CallbackQuery):
     try:
         sid = int(c.data.split(":", 1)[1])
     except ValueError:
-        await c.answer("Mã dịch vụ không hợp lệ.", show_alert=True)
+        await c.answer("Mã sản phẩm không hợp lệ.", show_alert=True)
         return
-    async with await connect() as db:
-        cur = await db.execute("SELECT name,price FROM services WHERE id=? AND active=1", (sid,))
-        service = await cur.fetchone()
+    async with await db_connect() as db:
+        service = await (await db.execute(
+            "SELECT name,price FROM services WHERE id=? AND active=1", (sid,))).fetchone()
         if not service:
-            await c.answer("Dịch vụ không còn hoạt động.", show_alert=True)
+            await c.answer("Sản phẩm không còn hoạt động.", show_alert=True)
             return
         name, price = service
-        cur = await db.execute("SELECT balance FROM users WHERE user_id=?", (c.from_user.id,))
-        row = await cur.fetchone()
+        row = await (await db.execute("SELECT balance FROM users WHERE user_id=?", (c.from_user.id,))).fetchone()
         if not row or int(row[0]) < price:
             await c.answer("Số dư không đủ. Hãy nạp thêm.", show_alert=True)
             return
         await db.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (price, c.from_user.id))
-        cur = await db.execute("INSERT INTO orders(user_id,service_id,service_name,price,status,created_at) VALUES(?,?,?,?,?,?)",
-            (c.from_user.id, sid, name, price, "pending", datetime.now(timezone.utc).isoformat()))
+        cur = await db.execute(
+            "INSERT INTO orders(user_id,service_id,service_name,price,status,created_at) VALUES(?,?,?,?,?,?)",
+            (c.from_user.id, sid, name, price, "pending", now()))
         oid = cur.lastrowid
         await db.commit()
-    await c.message.edit_text(f"✅ Đã tạo đơn <b>#{oid}</b>\nDịch vụ: {escape(name)}\nGiá: {money(price)}\nTrạng thái: <b>pending</b>\nĐơn đang chờ xử lý.", reply_markup=back_kb())
+    await c.message.edit_text(
+        f"✅ Đã tạo đơn <b>#{oid}</b>\nSản phẩm: {escape(name)}\nGiá: {money(price)}\nTrạng thái: <b>pending</b>\nĐơn đang chờ Admin xử lý.",
+        reply_markup=back_kb())
     for aid in ADMIN_IDS:
         try:
-            await c.bot.send_message(aid, f"📦 Đơn mới #{oid}\nUser: {c.from_user.id}\nDịch vụ: {escape(name)}")
+            await c.bot.send_message(aid, f"📦 Đơn mới #{oid}\nUser: <code>{c.from_user.id}</code>\nSản phẩm: {escape(name)}")
         except Exception:
-            pass
+            logging.exception("Cannot notify admin")
     await c.answer("Đã tạo đơn.")
 
 @dp.message(Command("addservice"))
 async def add_service(m: Message):
-    if not admin(m.from_user.id): return
+    if not is_admin(m.from_user.id):
+        return
     raw = (m.text or "").partition(" ")[2]
-    if "|" not in raw:
-        await m.answer("Cú pháp: <code>/addservice Tên dịch vụ|Giá</code>"); return
-    name, price_s = [x.strip() for x in raw.rsplit("|", 1)]
-    if not name or not price_s.isdigit() or int(price_s) <= 0:
-        await m.answer("Tên hoặc giá không hợp lệ."); return
-    async with await connect() as db:
-        cur = await db.execute("INSERT INTO services(name,price) VALUES(?,?)", (name, int(price_s)))
+    parts = [x.strip() for x in raw.split("|")]
+    if len(parts) != 3 or parts[0].upper() not in {"GAME", "SMS", "PRX"} or not parts[2].isdigit() or int(parts[2]) <= 0:
+        await m.answer("Cú pháp: <code>/addservice GAME|Tên code|Giá</code> hoặc SMS/PRX.")
+        return
+    category, name, price = parts[0].upper(), parts[1], int(parts[2])
+    if not name:
+        await m.answer("Tên sản phẩm không được để trống.")
+        return
+    async with await db_connect() as db:
+        cur = await db.execute("INSERT INTO services(name,price,category) VALUES(?,?,?)", (name, price, category))
         sid = cur.lastrowid
         await db.commit()
-    await m.answer(f"✅ Đã thêm dịch vụ ID <b>{sid}</b>: {escape(name)} · {money(int(price_s))}")
+    await m.answer(f"✅ Đã thêm sản phẩm #{sid}: <b>{escape(name)}</b> · {category} · {money(price)}")
 
 @dp.message(Command("delservice"))
 async def del_service(m: Message):
-    if not admin(m.from_user.id): return
-    p = (m.text or "").split()
-    if len(p) != 2 or not p[1].isdigit():
-        await m.answer("Cú pháp: <code>/delservice ID</code>"); return
-    async with await connect() as db:
-        await db.execute("UPDATE services SET active=0 WHERE id=?", (int(p[1]),))
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await m.answer("Cú pháp: <code>/delservice ID</code>")
+        return
+    async with await db_connect() as db:
+        await db.execute("UPDATE services SET active=0 WHERE id=?", (int(parts[1]),))
         await db.commit()
-    await m.answer("✅ Đã tắt dịch vụ.")
+    await m.answer("✅ Đã ẩn sản phẩm.")
+
+@dp.message(Command("addroom"))
+async def add_room(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
+    if len(parts) != 3 or parts[0].upper() not in set(BRANDS + ["HI88", "QQ88"]):
+        await m.answer("Cú pháp: <code>/addroom XX8|Tên phòng|2026-11-12 20:00</code>")
+        return
+    brand, title, starts = parts[0].upper(), parts[1], parts[2]
+    try:
+        datetime.strptime(starts, "%Y-%m-%d %H:%M")
+    except ValueError:
+        await m.answer("Thời gian phải theo định dạng YYYY-MM-DD HH:MM.")
+        return
+    async with await db_connect() as db:
+        cur = await db.execute("INSERT INTO minigame_rooms(brand,title,starts_at,created_at) VALUES(?,?,?,?)",
+                               (brand, title, starts, now()))
+        rid = cur.lastrowid
+        await db.commit()
+    await m.answer(f"✅ Đã tạo phòng Minigame #{rid}: <b>{escape(brand)} – {escape(title)}</b> · {escape(starts)}")
+
+@dp.message(Command("roomstatus"))
+async def room_status(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
+    if len(parts) != 2 or not parts[0].isdigit() or parts[1] not in {"open", "closed", "full"}:
+        await m.answer("Cú pháp: <code>/roomstatus ID|open</code> (hoặc closed/full)")
+        return
+    async with await db_connect() as db:
+        cur = await db.execute("UPDATE minigame_rooms SET status=? WHERE id=?", (parts[1], int(parts[0])))
+        await db.commit()
+    await m.answer("✅ Đã cập nhật trạng thái phòng." if cur.rowcount else "Không tìm thấy phòng.")
+
+@dp.message(Command("result"))
+async def publish_result(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|", 1)]
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1]:
+        await m.answer("Cú pháp: <code>/result ID|Nội dung kết quả</code>")
+        return
+    rid, result = int(parts[0]), parts[1]
+    async with await db_connect() as db:
+        cur = await db.execute("UPDATE minigame_rooms SET result=?,status='finished' WHERE id=?", (result, rid))
+        await db.commit()
+    await m.answer("🏁 Đã công bố kết quả." if cur.rowcount else "Không tìm thấy phòng.")
+
+@dp.message(Command("roomsadmin"))
+async def rooms_admin(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,brand,title,starts_at,status FROM minigame_rooms ORDER BY id DESC LIMIT 30")).fetchall()
+    if not rows:
+        await m.answer("Chưa có phòng Minigame.")
+        return
+    lines = ["📋 <b>DANH SÁCH PHÒNG</b>"]
+    for rid, brand, title, starts, status in rows:
+        lines.append(f"#{rid} · {escape(brand)} · {escape(title)} · {escape(starts)} · {escape(status)}")
+    await m.answer("\n".join(lines))
 
 @dp.message(Command("duyetnap"))
 async def approve_deposit(m: Message):
-    if not admin(m.from_user.id): return
-    p = (m.text or "").split()
-    if len(p) != 2 or not p[1].isdigit():
-        await m.answer("Cú pháp: <code>/duyetnap ID</code>"); return
-    did = int(p[1])
-    async with await connect() as db:
-        cur = await db.execute("SELECT user_id,amount,status FROM deposits WHERE id=?", (did,))
-        row = await cur.fetchone()
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await m.answer("Cú pháp: <code>/duyetnap ID</code>")
+        return
+    did = int(parts[1])
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT user_id,amount,status FROM deposits WHERE id=?", (did,))).fetchone()
         if not row:
-            await m.answer("Không tìm thấy yêu cầu."); return
+            await m.answer("Không tìm thấy yêu cầu.")
+            return
         uid, amount, status = row
         if status != "pending":
-            await m.answer("Yêu cầu đã được xử lý."); return
+            await m.answer("Yêu cầu đã được xử lý.")
+            return
         await db.execute("UPDATE deposits SET status='approved' WHERE id=?", (did,))
         await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, uid))
         await db.commit()
     await m.answer(f"✅ Đã duyệt nạp #{did}: {money(amount)}.")
-    try: await m.bot.send_message(uid, f"🎉 Nạp tiền thành công: <b>{money(amount)}</b>.")
-    except Exception: pass
+    try:
+        await m.bot.send_message(uid, f"🎉 Nạp tiền thành công: <b>{money(amount)}</b>.")
+    except Exception:
+        pass
 
 @dp.message(Command("huy"))
 async def reject_deposit(m: Message):
-    if not admin(m.from_user.id): return
-    p = (m.text or "").split()
-    if len(p) != 3 or p[1].lower() != "nap" or not p[2].isdigit():
-        await m.answer("Cú pháp: <code>/huy nap ID</code>"); return
-    did = int(p[2])
-    async with await connect() as db:
-        cur = await db.execute("SELECT user_id,status FROM deposits WHERE id=?", (did,))
-        row = await cur.fetchone()
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 3 or parts[1].lower() != "nap" or not parts[2].isdigit():
+        await m.answer("Cú pháp: <code>/huy nap ID</code>")
+        return
+    did = int(parts[2])
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT user_id,status FROM deposits WHERE id=?", (did,))).fetchone()
         if not row:
-            await m.answer("Không tìm thấy yêu cầu."); return
+            await m.answer("Không tìm thấy yêu cầu.")
+            return
         uid, status = row
         if status != "pending":
-            await m.answer("Yêu cầu đã được xử lý."); return
+            await m.answer("Yêu cầu đã được xử lý.")
+            return
         await db.execute("UPDATE deposits SET status='rejected' WHERE id=?", (did,))
         await db.commit()
     await m.answer(f"Đã từ chối yêu cầu nạp #{did}.")
-    try: await m.bot.send_message(uid, f"Yêu cầu nạp #{did} đã bị từ chối.")
-    except Exception: pass
+    try:
+        await m.bot.send_message(uid, f"Yêu cầu nạp #{did} đã bị từ chối.")
+    except Exception:
+        pass
 
 @dp.message(Command("setbalance"))
 async def set_balance(m: Message):
-    if not admin(m.from_user.id): return
-    p = (m.text or "").split()
-    if len(p) != 3 or not p[1].isdigit() or not p[2].isdigit():
-        await m.answer("Cú pháp: <code>/setbalance USER_ID SỐ_TIỀN</code>"); return
-    uid, amount = int(p[1]), int(p[2])
-    async with await connect() as db:
-        cur = await db.execute("SELECT 1 FROM users WHERE user_id=?", (uid,))
-        if not await cur.fetchone():
-            await m.answer("User chưa từng mở bot."); return
-        await db.execute("UPDATE users SET balance=? WHERE user_id=?", (amount, uid))
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await m.answer("Cú pháp: <code>/setbalance USER_ID SỐ_TIỀN</code>")
+        return
+    uid, amount = int(parts[1]), int(parts[2])
+    async with await db_connect() as db:
+        cur = await db.execute("UPDATE users SET balance=? WHERE user_id=?", (amount, uid))
         await db.commit()
-    await m.answer(f"✅ Đã đặt số dư user {uid}: {money(amount)}")
+    await m.answer("✅ Đã cập nhật số dư." if cur.rowcount else "Không tìm thấy người dùng.")
 
 @dp.message(Command("stats"))
 async def stats(m: Message):
-    if not admin(m.from_user.id): return
-    async with await connect() as db:
+    if not is_admin(m.from_user.id):
+        return
+    async with await db_connect() as db:
         users = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
         orders = (await (await db.execute("SELECT COUNT(*) FROM orders")).fetchone())[0]
         pending = (await (await db.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'")).fetchone())[0]
-    await m.answer(f"📊 <b>THỐNG KÊ</b>\nNgười dùng: {users}\nĐơn hàng: {orders}\nNạp chờ duyệt: {pending}")
+        rooms = (await (await db.execute("SELECT COUNT(*) FROM minigame_rooms")).fetchone())[0]
+    await m.answer(f"📊 <b>THỐNG KÊ</b>\nNgười dùng: {users}\nĐơn hàng: {orders}\nNạp chờ duyệt: {pending}\nPhòng Minigame: {rooms}")
 
 @dp.message(Command("admin"))
 async def admin_cmd(m: Message):
-    if not admin(m.from_user.id):
-        await m.answer("Bạn không có quyền."); return
-    await m.answer("🛠 <b>LỆNH ADMIN</b>\n/addservice Tên|Giá\n/delservice ID\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats")
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền.")
+        return
+    await m.answer("🛠 <b>LỆNH ADMIN</b>\n/addservice GAME|Tên|Giá\n/addservice SMS|Tên|Giá\n/addservice PRX|Tên|Giá\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\n/roomstatus ID|open\n/result ID|Kết quả\n/roomsadmin\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats")
 
 async def main():
     await init_db()
