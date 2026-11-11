@@ -59,7 +59,7 @@ def main_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎁 GIỚI THIỆU", callback_data="menu:referral"),
             InlineKeyboardButton(text="☎️ CSKH", url="https://t.me/benii2k"),
         ],
-        [InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="menu:history")],
+        [InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="menu:history"),\n            InlineKeyboardButton(text="❔ HƯỚNG DẪN", callback_data="menu:guide")],
     ])
 
 
@@ -407,6 +407,21 @@ async def menu_topup(call: CallbackQuery):
         "Thông tin thanh toán chưa được ADMIN cấu hình.\n"
         "Vui lòng liên hệ ADMIN để được hướng dẫn. "
         "Bot chưa tự động nhận hoặc xác minh thanh toán.",
+        reply_markup=back_menu()
+    )
+
+
+@dp.callback_query(F.data == "menu:guide")
+async def menu_guide(call: CallbackQuery):
+    await call.answer()
+    await call.message.edit_text(
+        "❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\\n\\n"
+        "1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\\n"
+        "2. Bấm ĐẶT DỊCH VỤ để gửi yêu cầu.\\n"
+        "3. Chờ ADMIN xác nhận và liên hệ nếu cần bổ sung thông tin.\\n"
+        "4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.\\n\\n"
+        "💳 Nạp tiền hiện cần ADMIN hướng dẫn/xác nhận thủ công.\\n"
+        "☎️ CSKH: @benii2k",
         reply_markup=back_menu()
     )
 
