@@ -510,15 +510,86 @@ async def menu_profile(call: CallbackQuery):
     await call.answer()
     user = call.from_user
     balance = await get_balance(user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 NẠP TIỀN", callback_data="profile:topup")],
+        [InlineKeyboardButton(text="🛍️ LỊCH SỬ MUA HÀNG", callback_data="profile:orders")],
+        [InlineKeyboardButton(text="💳 LỊCH SỬ NẠP TIỀN", callback_data="profile:topups")],
+        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
+    ])
     await call.message.edit_text(
-        "👤 <b>THÔNG TIN CÁ NHÂN</b>\n\n"
-        f"🆔 Telegram ID: <code>{user.id}</code>\n"
+        "👤 <b>TRANG CÁ NHÂN</b>\n\n"
         f"👤 Tên: {html.escape(user.full_name)}\n"
-        f"🔗 Username: @{html.escape(user.username) if user.username else 'Chưa thiết lập'}\n\n"
-        "📦 Dùng /orders để xem lịch sử đơn hàng.\n"
-        f"💰 Số dư: <b>{money(balance)}</b>",
-        reply_markup=back_menu()
+        f"🆔 Telegram ID: <code>{user.id}</code>\n"
+        f"💰 Số dư hiện tại: <b>{money(balance)}</b>\n\n"
+        "Chọn chức năng bên dưới:",
+        reply_markup=kb
     )
+
+
+@dp.callback_query(F.data == "profile:topup")
+async def profile_topup(call: CallbackQuery):
+    await call.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 QUAY LẠI CÁ NHÂN", callback_data="menu:profile")],
+        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
+    ])
+    await call.message.edit_text(PAGE_TEXTS["topup"], reply_markup=kb)
+
+
+@dp.callback_query(F.data == "profile:orders")
+async def profile_order_history(call: CallbackQuery):
+    await call.answer()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, service_name, price, status, created_at FROM orders "
+            "WHERE user_id=? ORDER BY id DESC LIMIT 20",
+            (call.from_user.id,)
+        )
+        rows = await cur.fetchall()
+    labels = {"pending": "⏳ Đang chờ ADMIN", "accepted": "✅ Đã xác nhận", "rejected": "❌ Đã từ chối"}
+    lines = ["🛍️ <b>LỊCH SỬ MUA HÀNG</b>"]
+    for oid, name, price, status, created in rows:
+        lines.append(
+            f"\n<b>Đơn #{oid} · {html.escape(name)}</b>\n"
+            f"💰 Giá: {money(price)}\n"
+            f"📌 Trạng thái: {labels.get(status, status)}\n"
+            f"🕒 {html.escape(created)}"
+        )
+    if not rows:
+        lines.append("\nBạn chưa có đơn hàng nào.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 CẬP NHẬT", callback_data="profile:orders")],
+        [InlineKeyboardButton(text="🔙 QUAY LẠI CÁ NHÂN", callback_data="menu:profile")]
+    ])
+    await call.message.edit_text("\n".join(lines), reply_markup=kb)
+
+
+@dp.callback_query(F.data == "profile:topups")
+async def profile_topup_history(call: CallbackQuery):
+    await call.answer()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT amount, note, created_at FROM wallet_transactions "
+            "WHERE user_id=? AND amount>0 ORDER BY id DESC LIMIT 20",
+            (call.from_user.id,)
+        )
+        rows = await cur.fetchall()
+    lines = ["💳 <b>LỊCH SỬ NẠP TIỀN</b>"]
+    for amount, note, created in rows:
+        lines.append(
+            f"\n➕ Số tiền: <b>{money(amount)}</b>\n"
+            f"📝 Nội dung: {html.escape(note)}\n"
+            f"🕒 {html.escape(created)}"
+        )
+    if not rows:
+        lines.append("\nBạn chưa có giao dịch cộng tiền nào.")
+    balance = await get_balance(call.from_user.id)
+    lines.append(f"\n💰 Số dư hiện tại: <b>{money(balance)}</b>")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 CẬP NHẬT", callback_data="profile:topups")],
+        [InlineKeyboardButton(text="🔙 QUAY LẠI CÁ NHÂN", callback_data="menu:profile")]
+    ])
+    await call.message.edit_text("\n".join(lines), reply_markup=kb)
 
 
 @dp.callback_query(F.data == "menu:referral")
