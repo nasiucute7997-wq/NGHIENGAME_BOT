@@ -1,26 +1,49 @@
-# OKOTP Telegram Bot - bộ khung khởi đầu
+# NGHIỆN CODE BOT
 
-Bot Telegram Python + Aiogram 3 + SQLite. Có menu, tài khoản, số dư, danh sách dịch vụ, tạo đơn, yêu cầu nạp thủ công và quản trị.
+Telegram bot dùng Python, Aiogram 3 và SQLite.
 
-## Cấu hình Railway
-Thêm các Variables:
-- BOT_TOKEN: token BotFather cấp (không đưa token vào GitHub)
-- ADMIN_IDS: 6369714149
-- SUPPORT_USERNAME: username hỗ trợ, không bắt buộc
-- DB_PATH: /data/bot.db nếu đã gắn Railway Volume tại /data; nếu không, dùng bot.db (có thể mất dữ liệu khi redeploy)
+## Danh mục người dùng
+- CODE GAME: sản phẩm thuộc nhóm GAME.
+- MINIGAME LIVE: XX8, AD88, U888, ABC8, MM88, RR88, XX88, GG88.
+- Minigame đặc biệt: HI88 (Thứ 5), QQ88 (Thứ 6).
+- DỊCH VỤ KHÁC: SMS và PRX.
+- Tài khoản, nạp tiền thủ công, lịch sử đơn, hướng dẫn và hỗ trợ.
 
-## Lệnh người dùng
-/start, /menu, /services, /balance, /deposit, /nap 50000, /orders
+## Cài đặt
+1. Tạo bot bằng BotFather và lấy token.
+2. Cài Python 3.11+.
+3. Chạy:
+   \`pip install -r requirements.txt\`
+4. Tạo file \`.env\` từ \`.env.example\` và điền BOT_TOKEN.
+5. Chạy \`python main.py\`.
 
-## Lệnh admin
-/admin, /addservice Tên dịch vụ|Giá, /delservice ID, /duyetnap ID, /huy nap ID, /setbalance USER_ID SỐ_TIỀN, /stats
+Không commit file \`.env\` hoặc token lên GitHub.
 
-## Chạy local
-pip install -r requirements.txt
-python main.py
+## Railway
+- Root Directory: \`/okotp_bot\`
+- Start Command: \`python main.py\`
+- Variables:
+  - \`BOT_TOKEN\`: token mới từ BotFather
+  - \`ADMIN_IDS=6369714149\`
+  - \`SUPPORT_USERNAME\`: username hỗ trợ (không bắt buộc)
+  - \`DB_PATH=/data/bot.db\`
+- Gắn Railway Volume tại \`/data\` để giữ database qua các lần deploy.
 
-## Triển khai
-Tạo Railway service từ repository, đặt Variables, sau đó Deploy. Đây là worker chạy polling, không cần domain.
+## Lệnh Admin
+- \`/addservice GAME|Tên code|Giá\`
+- \`/addservice SMS|Tên dịch vụ|Giá\`
+- \`/addservice PRX|Tên proxy|Giá\`
+- \`/delservice ID\`
+- \`/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\`
+- \`/roomstatus ID|open\` (hoặc \`closed\`, \`full\`)
+- \`/result ID|Nội dung kết quả\`
+- \`/roomsadmin\`
+- \`/duyetnap ID\`
+- \`/huy nap ID\`
+- \`/setbalance USER_ID SỐ_TIỀN\`
+- \`/stats\`
 
-## Tích hợp API OTP
-Hiện tại đơn được lưu trạng thái pending; chưa gọi API nhà cung cấp. Cần tài liệu API chính thức của nhà cung cấp được phép sử dụng (endpoint, xác thực, mã dịch vụ, lấy OTP, hủy/hoàn tiền). Không lưu API key trong source code. Chỉ dùng cho xác minh tài khoản/dịch vụ bạn có quyền sử dụng; không dùng để vượt xác thực hay truy cập tài khoản người khác.
+BRAND hợp lệ: XX8, AD88, U888, ABC8, MM88, RR88, XX88, GG88, HI88, QQ88.
+
+## Giới hạn tích hợp
+Bot đã có danh mục, đơn hàng, tài khoản, nạp thủ công và quản lý phòng Minigame. Nhà cung cấp SMS, proxy, cổng thanh toán và hệ thống giao code tự động chưa được tích hợp; các đơn sản phẩm được tạo ở trạng thái pending để Admin xử lý. Chỉ kết nối nhà cung cấp hợp pháp, có quyền phân phối và API chính thức. SMS chỉ dùng cho số/SIM thuộc quyền sở hữu hoặc được ủy quyền và cho mục đích xác minh hợp lệ.
