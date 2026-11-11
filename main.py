@@ -21,6 +21,7 @@ logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
 DB_PATH = os.getenv("DB_PATH", "bot.db")
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+ADMIN_WALLET_STATE = {}
 
 SERVICES = {
     "new88": ("NEW88", 10000, "Dịch vụ NEW88"),
@@ -215,7 +216,10 @@ async def admin_handler(message: Message):
         cur = await db.execute("SELECT COUNT(*) FROM orders")
         total = (await cur.fetchone())[0]
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 CỘNG/TRỪ TIỀN", callback_data="admin:wallet")],
+        [InlineKeyboardButton(text="💰 QUẢN LÝ SỐ DƯ", callback_data="admin:wallet")],
+        [InlineKeyboardButton(text="🛍️ QUẢN LÝ DỊCH VỤ", callback_data="admin:services")],
+        [InlineKeyboardButton(text="🔘 CHỈNH NÚT MENU", callback_data="admin:buttons")],
+        [InlineKeyboardButton(text="📝 CHỈNH LỆNH /start, /help", callback_data="admin:commands")],
         [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")],
         [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
     ])
@@ -622,6 +626,36 @@ async def admin_wallet_input(message: Message):
             logging.info("Không gửi được thông báo số dư UID %s", target)
     except ValueError as exc:
         await message.answer("⚠️ " + html.escape(str(exc)) + "\nGửi lại hoặc /cancel.")
+
+
+@dp.callback_query(F.data == "admin:services")
+async def admin_services_stub(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await call.answer()
+    lines = ["🛍️ <b>DỊCH VỤ HIỆN TẠI</b>"]
+    for key, (name, price, desc) in SERVICES.items():
+        lines.append(f"<code>{key}</code> · {html.escape(name)} · {money(price)}")
+    await call.message.answer("\n".join(lines) + "\n\nChức năng sửa trực tiếp sẽ được bổ sung tiếp.")
+
+
+@dp.callback_query(F.data == "admin:buttons")
+async def admin_buttons_stub(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await call.answer()
+    await call.message.answer("🔘 Chức năng chỉnh tên nút và link menu đang được xây dựng.")
+
+
+@dp.callback_query(F.data == "admin:commands")
+async def admin_commands_stub(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await call.answer()
+    await call.message.answer("📝 Chức năng chỉnh nội dung /start và /help đang được xây dựng.")
 
 
 async def main():
