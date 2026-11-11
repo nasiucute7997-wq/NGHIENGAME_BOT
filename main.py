@@ -2,6 +2,7 @@ import asyncio
 import html
 import logging
 import os
+from urllib.parse import quote
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -149,6 +150,11 @@ async def init_db():
             )
         """)
 
+        await db.execute("""CREATE TABLE IF NOT EXISTS referrals (
+            user_id INTEGER PRIMARY KEY,
+            referrer_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )""")
         await db.execute("CREATE TABLE IF NOT EXISTS wallets (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)")
         await db.execute("""CREATE TABLE IF NOT EXISTS wallet_transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -218,7 +224,28 @@ async def send_home(message: Message):
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    await save_user(message.from_user)
+    user = message.from_user
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT 1 FROM users WHERE user_id=?", (user.id,))
+        is_new_user = await cur.fetchone() is None
+
+    await save_user(user)
+
+    # Chỉ ghi nhận giới thiệu khi người dùng mới mở bot lần đầu qua link ref_ID.
+    parts = (message.text or "").split(maxsplit=1)
+    if is_new_user and len(parts) == 2 and parts[1].startswith("ref_"):
+        try:
+            referrer_id = int(parts[1][4:])
+        except ValueError:
+            referrer_id = 0
+        if referrer_id and referrer_id != user.id:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute(
+                    "INSERT OR IGNORE INTO referrals(user_id, referrer_id, created_at) VALUES (?, ?, ?)",
+                    (user.id, referrer_id, datetime.now(TZ).isoformat(timespec="seconds"))
+                )
+                await db.commit()
+
     await send_home(message)
 
 
@@ -535,7 +562,9 @@ async def menu_profile(call: CallbackQuery):
         joined_display = datetime.fromisoformat(joined_at).astimezone(TZ).strftime("%d/%m/%Y %H:%M")
     except (TypeError, ValueError):
         joined_display = str(joined_at)
-    referred_count = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user.id,))
+        referred_count = (await cur.fetchone())[0]
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 NẠP TIỀN", callback_data="profile:topup")],
         [InlineKeyboardButton(text="🛍️ LỊCH SỬ MUA HÀNG", callback_data="profile:orders")],
@@ -624,7 +653,30 @@ async def profile_topup_history(call: CallbackQuery):
 @dp.callback_query(F.data == "menu:referral")
 async def menu_referral(call: CallbackQuery):
     await call.answer()
-    await call.message.edit_text(PAGE_TEXTS['referral'], reply_markup=back_menu())
+    user_id = call.from_user.id
+    bot_username = "nghiengame_bot"
+    referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    share_text = quote("Mời bạn sử dụng NGHIEN CODE BOT tại đây:")
+    share_url = f"https://t.me/share/url?url={quote(referral_link, safe='')}&text={share_text}"
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
+        referred_count = (await cur.fetchone())[0]
+
+    text = (
+        "🎁 <b>CHIA SẺ NGHIEN CODE BOT</b>\n\n"
+        "🔗 Link giới thiệu riêng của bạn:\n"
+        f"<code>{html.escape(referral_link)}</code>\n\n"
+        f"👥 Số người đã tham gia qua link: <b>{referred_count}</b>\n\n"
+        "📌 Gửi link này cho bạn bè. Khi người mới mở bot lần đầu bằng link của bạn, "
+        "hệ thống sẽ ghi nhận lượt giới thiệu."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 CHIA SẺ LINK BOT", url=share_url)],
+        [InlineKeyboardButton(text="🔄 CẬP NHẬT", callback_data="menu:referral")],
+        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
+    ])
+    await call.message.edit_text(text, reply_markup=kb)
 
 
 @dp.callback_query(F.data == "menu:other")
