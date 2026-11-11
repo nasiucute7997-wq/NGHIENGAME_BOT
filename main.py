@@ -74,11 +74,17 @@ def back_menu() -> InlineKeyboardMarkup:
 
 def service_keyboard() -> InlineKeyboardMarkup:
     rows = []
+    pair = []
     for key, (name, price, _) in SERVICES.items():
-        rows.append([InlineKeyboardButton(
+        pair.append(InlineKeyboardButton(
             text=f"{name} · {money(price)}",
             callback_data=f"service:{key}"
-        )])
+        ))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
     rows.append([InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
