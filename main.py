@@ -111,6 +111,12 @@ async def init_db():
                 updated_at TEXT NOT NULL
             )
         """)
+
+        await db.execute("CREATE TABLE IF NOT EXISTS wallets (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)")
+        await db.execute("""CREATE TABLE IF NOT EXISTS wallet_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL
+        )""")
         await db.commit()
 
 
@@ -209,6 +215,7 @@ async def admin_handler(message: Message):
         cur = await db.execute("SELECT COUNT(*) FROM orders")
         total = (await cur.fetchone())[0]
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 CỘNG/TRỪ TIỀN", callback_data="admin:wallet")],
         [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")],
         [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
     ])
@@ -496,6 +503,125 @@ async def menu_other(call: CallbackQuery):
         "🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.",
         reply_markup=back_menu()
     )
+
+
+
+@dp.callback_query(F.data == "admin:wallet")
+async def admin_wallet_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await call.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ CỘNG TIỀN", callback_data="admin:wallet:add"),
+         InlineKeyboardButton(text="➖ TRỪ TIỀN", callback_data="admin:wallet:sub")],
+        [InlineKeyboardButton(text="🔎 KIỂM TRA SỐ DƯ", callback_data="admin:wallet:check"),
+         InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="admin:wallet:history")],
+        [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
+    ])
+    await call.message.edit_text("💰 <b>QUẢN LÝ SỐ DƯ</b>", reply_markup=kb)
+
+
+@dp.callback_query(F.data.in_({"admin:wallet:add", "admin:wallet:sub", "admin:wallet:check"}))
+async def admin_wallet_prompt(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    action = call.data.rsplit(":", 1)[1]
+    ADMIN_WALLET_STATE[call.from_user.id] = action
+    await call.answer()
+    prompt = "Gửi Telegram ID người dùng." if action == "check" else "Gửi theo mẫu: <code>TelegramID SốTiền Ghi chú</code>\nVí dụ: <code>123456789 50000 Hoàn tiền đơn #12</code>\nGửi /cancel để hủy."
+    await call.message.answer(prompt)
+
+
+@dp.callback_query(F.data == "admin:wallet:history")
+async def admin_wallet_history(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await call.answer()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT admin_id,user_id,amount,note,created_at FROM wallet_transactions ORDER BY id DESC LIMIT 15")
+        rows = await cur.fetchall()
+    text = "\n".join(
+        f"UID <code>{uid}</code> · {amount:+,}đ\nADMIN {admin} · {html.escape(note)} · {html.escape(created)}"
+        for admin, uid, amount, note, created in rows
+    ) if rows else "Chưa có giao dịch."
+    await call.message.edit_text("📜 <b>LỊCH SỬ CỘNG/TRỪ TIỀN</b>\n\n" + text,
+                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]]))
+
+
+@dp.callback_query(F.data == "admin:back")
+async def admin_back(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Không có quyền.", show_alert=True)
+        return
+    await call.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 CỘNG/TRỪ TIỀN", callback_data="admin:wallet")],
+        [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")]
+    ])
+    await call.message.edit_text("🔐 <b>BẢNG ĐIỀU KHIỂN ADMIN</b>", reply_markup=kb)
+
+
+@dp.message(Command("cancel"))
+async def admin_cancel(message: Message):
+    ADMIN_WALLET_STATE.pop(message.from_user.id, None)
+    await message.answer("Đã hủy thao tác.")
+
+
+@dp.message(F.text)
+async def admin_wallet_input(message: Message):
+    uid = message.from_user.id
+    action = ADMIN_WALLET_STATE.get(uid)
+    if not action:
+        return
+    if not is_admin(uid):
+        ADMIN_WALLET_STATE.pop(uid, None)
+        return
+    raw = (message.text or "").strip()
+    if raw == "/cancel":
+        ADMIN_WALLET_STATE.pop(uid, None)
+        await message.answer("Đã hủy thao tác.")
+        return
+    try:
+        if action == "check":
+            if not raw.isdigit():
+                raise ValueError("Gửi Telegram ID dạng số.")
+            target = int(raw)
+            async with aiosqlite.connect(DB_PATH) as db:
+                cur = await db.execute("SELECT balance FROM wallets WHERE user_id=?", (target,))
+                row = await cur.fetchone()
+            balance = row[0] if row else 0
+            ADMIN_WALLET_STATE.pop(uid, None)
+            await message.answer(f"UID <code>{target}</code>\nSố dư: <b>{money(balance)}</b>")
+            return
+        parts = raw.split(maxsplit=2)
+        if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            raise ValueError("Dùng: TelegramID SốTiền Ghi chú")
+        target, amount = int(parts[0]), int(parts[1])
+        if target <= 0 or amount <= 0:
+            raise ValueError("ID và số tiền phải lớn hơn 0.")
+        note = parts[2] if len(parts) > 2 else "Điều chỉnh bởi ADMIN"
+        delta = amount if action == "add" else -amount
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT OR IGNORE INTO wallets(user_id,balance) VALUES (?,0)", (target,))
+            cur = await db.execute("SELECT balance FROM wallets WHERE user_id=?", (target,))
+            balance = (await cur.fetchone())[0]
+            if balance + delta < 0:
+                raise ValueError(f"Số dư hiện tại {money(balance)}, không thể trừ.")
+            await db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (delta,target))
+            await db.execute("INSERT INTO wallet_transactions(admin_id,user_id,amount,note,created_at) VALUES (?,?,?,?,?)",
+                             (uid,target,delta,note,datetime.now(TZ).isoformat(timespec="seconds")))
+            await db.commit()
+        ADMIN_WALLET_STATE.pop(uid, None)
+        await message.answer(f"✅ Đã {'cộng' if delta > 0 else 'trừ'} {money(amount)} cho UID <code>{target}</code>.\nSố dư mới: <b>{money(balance+delta)}</b>")
+        try:
+            await message.bot.send_message(target, f"💰 Số dư được ADMIN điều chỉnh: <b>{delta:+,}đ</b>\nSố dư hiện tại: <b>{money(balance+delta)}</b>\nGhi chú: {html.escape(note)}")
+        except Exception:
+            logging.info("Không gửi được thông báo số dư UID %s", target)
+    except ValueError as exc:
+        await message.answer("⚠️ " + html.escape(str(exc)) + "\nGửi lại hoặc /cancel.")
 
 
 async def main():
