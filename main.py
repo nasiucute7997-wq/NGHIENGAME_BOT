@@ -77,6 +77,16 @@ def money(amount: int) -> str:
     return f"{amount:,}".replace(",", ".") + "đ"
 
 
+async def get_balance(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT balance FROM wallets WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+    return int(row[0]) if row else 0
+
+
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
