@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sqlite3
 from datetime import datetime, timezone
 from html import escape
 
@@ -299,11 +300,11 @@ async def cb_join(c: CallbackQuery):
             await db.execute("INSERT INTO minigame_entries(room_id,user_id,created_at) VALUES(?,?,?)",
                              (rid, c.from_user.id, now()))
             await db.commit()
-        except aiosqlite.IntegrityError:
+        except sqlite3.IntegrityError:
             await c.answer("Bạn đã đăng ký phòng này rồi.", show_alert=True)
             return
     await c.answer("Đăng ký thành công!", show_alert=True)
-    await cb_room(c)
+    await c.message.edit_text("✅ Bạn đã đăng ký tham gia phòng. Hãy theo dõi trạng thái và kết quả tại phòng này.", reply_markup=back_kb("rooms"))
 
 @dp.callback_query(F.data == "account")
 async def cb_account(c: CallbackQuery):
