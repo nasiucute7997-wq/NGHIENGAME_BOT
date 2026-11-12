@@ -37,7 +37,8 @@ def is_admin(uid):
     return uid in ADMIN_IDS
 
 async def db_connect():
-    return await aiosqlite.connect(DB_PATH)
+    # Return the unstarted connection; `async with await db_connect()` starts it once.
+    return aiosqlite.connect(DB_PATH)
 
 async def init_db():
     async with await db_connect() as db:
