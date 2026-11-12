@@ -73,6 +73,10 @@ FOLDER_DEFS = [
     ("home_orders", "📋 LỊCH SỬ ĐƠN", "Thư mục khách hàng"),
     ("home_contact", "📞 LIÊN HỆ ADMIN", "Thư mục khách hàng"),
     ("home_houses", "🏦 HỆ THỐNG NHÀ CÁI", "Thư mục khách hàng"),
+    ("mini_XX8", "🎯 MINIGAME XX8", "Chi tiết Minigame"),
+    ("mini_AD88", "🎯 MINIGAME AD88", "Chi tiết Minigame"),
+    ("mini_U888", "🎯 MINIGAME U888", "Chi tiết Minigame"),
+    ("mini_88CLB", "🎯 MINIGAME 88CLB", "Chi tiết Minigame"),
     ("admin_add", "➕ THÊM SẢN PHẨM", "Thư mục quản trị"),
     ("admin_products", "📦 QUẢN LÝ SẢN PHẨM", "Thư mục quản trị"),
     ("admin_deposits", "💰 DUYỆT NẠP TIỀN", "Thư mục quản trị"),
@@ -86,6 +90,10 @@ FOLDER_DEFS = [
     ("service_sms_send", "📤 SMS GỬI", "Danh mục dịch vụ"),
     ("service_proxy", "🌐 PROXY / PRX", "Danh mục dịch vụ"),
 ]
+
+async def folder_label(key, default):
+    value = await setting(f"folder_label:{key}", "")
+    return value or default
 
 async def folder_is_on(key):
     async with aiosqlite.connect(DB) as db:
@@ -112,7 +120,7 @@ async def home_kb(is_admin=False):
     ]
     for key, label, data in items:
         if await folder_is_on(key):
-            b.button(text=label, callback_data=data)
+            b.button(text=await folder_label(key, label), callback_data=data)
     b.button(text="🔄 LÀM MỚI MENU", callback_data="m:home")
     if is_admin:
         b.button(text="🛡 TRUNG TÂM QUẢN TRỊ", callback_data="m:admin")
@@ -135,6 +143,7 @@ async def admin_kb():
     for key, label, data in items:
         if await folder_is_on(key):
             b.button(text=label, callback_data=data)
+    b.button(text="✏️ SỬA TÊN TỪNG THƯ MỤC", callback_data="a:folders")
     b.button(text="⚙️ BẬT/TẮT TẤT CẢ THƯ MỤC", callback_data="a:folders")
     b.button(text="🔄 LÀM MỚI MENU", callback_data="a:refresh")
     b.button(text="⬅️ MENU CHÍNH", callback_data="m:home")
@@ -145,7 +154,9 @@ async def folders_kb():
     b = InlineKeyboardBuilder()
     for key, label, group in FOLDER_DEFS:
         enabled = await folder_is_on(key)
-        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | {label}", callback_data=f"af:{key}")
+        shown = await folder_label(key, label)
+        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | {shown}"[:64], callback_data=f"af:{key}")
+        b.button(text=f"✏️ SỬA TÊN | {shown}"[:64], callback_data=f"afe:{key}")
     b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
     b.button(text="⬅️ MENU ADMIN", callback_data="a:refresh")
     b.adjust(1)
@@ -274,23 +285,24 @@ async def menus(c: CallbackQuery):
         return await c.answer("Thư mục này hiện đang tắt.",show_alert=True)
     if key=="code":
         rows=[]
-        if await folder_is_on("home_codegame"): rows.append(("🎮 CODE GAME","m:codegame"))
-        if await folder_is_on("home_mini"): rows.append(("🎯 MINIGAME LIVE","m:mini"))
-        if await folder_is_on("home_share"): rows.append(("🔗 CODE SHARE","m:share"))
+        if await folder_is_on("home_codegame"): rows.append((await folder_label("home_codegame","🎮 CODE GAME"),"m:codegame"))
+        if await folder_is_on("home_mini"): rows.append((await folder_label("home_mini","🎯 MINIGAME LIVE"),"m:mini"))
+        if await folder_is_on("home_share"): rows.append((await folder_label("home_share","🔗 CODE SHARE"),"m:share"))
         rows.append(("⬅️ MENU CHÍNH","m:home"))
-        await c.message.edit_text("🚀 CODE\n\nChọn danh mục:",reply_markup=kb2(rows))
+        await c.message.edit_text((await folder_label("home_code","🚀 CODE"))+"\n\nChọn danh mục:",reply_markup=kb2(rows))
     elif key=="codegame":
-        await c.message.edit_text("🎮 CODE GAME\n\nChọn game:",reply_markup=kb2([(g,f"game:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]+[("⬅️ QUAY LẠI","m:code")]))
+        game_rows=[(await folder_label(f"game_{g}",g),f"game:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]
+        await c.message.edit_text((await folder_label("home_codegame","🎮 CODE GAME"))+"\n\nChọn game:",reply_markup=kb2(game_rows+[("⬅️ QUAY LẠI","m:code")]))
     elif key=="mini":
-        rows=[(f"🎯 MINIGAME {g}",f"miniitem:{g}") for g in ["XX8","AD88","U888","88CLB"]]
+        rows=[(await folder_label(f"mini_{g}",f"🎯 MINIGAME {g}"),f"miniitem:{g}") for g in ["XX8","AD88","U888","88CLB"] if await folder_is_on(f"mini_{g}")]
         rows.append(("⬅️ QUAY LẠI","m:code"))
-        await c.message.edit_text("🎯 MINIGAME LIVE\n\nChọn minigame:",reply_markup=kb2(rows))
+        await c.message.edit_text((await folder_label("home_mini","🎯 MINIGAME LIVE"))+"\n\nChọn minigame:",reply_markup=kb2(rows))
     elif key=="share":
         await page_products(c.message,"SHARE")
     elif key=="services":
-        rows=[(label,data) for folder,label,data in [("service_sms_receive","📩 SMS NHẬN","cat:SMS"),("service_sms_send","📤 SMS GỬI","cat:SMS"),("service_proxy","🌐 PROXY / PRX","cat:PRX")] if await folder_is_on(folder)]
+        rows=[(await folder_label(folder,label),data) for folder,label,data in [("service_sms_receive","📩 SMS NHẬN","cat:SMS"),("service_sms_send","📤 SMS GỬI","cat:SMS"),("service_proxy","🌐 PROXY / PRX","cat:PRX")] if await folder_is_on(folder)]
         rows.append(("⬅️ QUAY LẠI","m:home"))
-        await c.message.edit_text("🛠 DỊCH VỤ KHÁC\n\nChọn dịch vụ:",reply_markup=kb2(rows))
+        await c.message.edit_text((await folder_label("home_services","🛠 DỊCH VỤ KHÁC"))+"\n\nChọn dịch vụ:",reply_markup=kb2(rows))
     elif key=="account":
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT balance FROM users WHERE id=?",(c.from_user.id,)); row=await cur.fetchone()
@@ -404,6 +416,19 @@ async def purchase_action(c: CallbackQuery):
         except Exception: pass
     await c.answer("Thanh toán hoàn tất.")
 
+@dp.callback_query(F.data.startswith("afe:"))
+async def admin_edit_folder_name(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    key = c.data.split(":",1)[1]
+    defs = {item[0]: item[1] for item in FOLDER_DEFS}
+    if key not in defs:
+        return await c.answer("Thư mục không hợp lệ.", show_alert=True)
+    pending[c.from_user.id] = {"folder_label_edit": key}
+    current = await folder_label(key, defs[key])
+    await c.message.answer(f"✏️ SỬA TÊN THƯ MỤC\\nTên hiện tại: {current}\\n\\nNhập tên mới (tối đa 60 ký tự):", reply_markup=kb([("❌ HỦY","afe:cancel")]))
+    await c.answer()
+
 @dp.callback_query(F.data.startswith("af:"))
 async def admin_toggle_folder(c: CallbackQuery):
     if c.from_user.id not in ADMINS:
@@ -415,7 +440,7 @@ async def admin_toggle_folder(c: CallbackQuery):
     async with aiosqlite.connect(DB) as db:
         await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder:{key}", "0" if current else "1"))
         await db.commit()
-    await c.message.edit_text("⚙️ BẬT/TẮT THƯ MỤC\\nĐã cập nhật trạng thái. Chọn tiếp thư mục:", reply_markup=await folders_kb())
+    await c.message.edit_text("⚙️ QUẢN LÝ THƯ MỤC\\nĐã cập nhật trạng thái. Mỗi thư mục có nút ON/OFF và SỬA TÊN riêng:", reply_markup=await folders_kb())
     await c.answer("Đã đổi trạng thái.")
 
 @dp.callback_query(F.data.startswith("a:"))
@@ -886,6 +911,20 @@ async def process_admin_text(m: Message):
     uid=m.from_user.id
     task=pending.get(uid)
     if uid not in ADMINS: return False
+    if isinstance(task,dict) and task.get("folder_label_edit"):
+        key = task["folder_label_edit"]
+        value = (m.text or "").strip()
+        if not value:
+            await m.answer("Tên thư mục không được để trống. Nhập lại hoặc bấm HỦY.")
+            return True
+        value = value[:60]
+        async with aiosqlite.connect(DB) as db:
+            await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder_label:{key}", value))
+            await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)", (uid, f"rename folder {key} to {value}"))
+            await db.commit()
+        pending.pop(uid, None)
+        await m.answer(f"✅ Đã đổi tên thư mục thành: {value}", reply_markup=await folders_kb())
+        return True
     if isinstance(task,dict) and task.get("admin_staff_add"):
         raw=(m.text or "").strip()
         if not raw.isdigit() or int(raw)<=0:
