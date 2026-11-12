@@ -43,6 +43,10 @@ def kb(rows):
     return b.as_markup()
 
 
+def back():
+    return kb([("⬅️ QUAY LẠI MENU", "m:home")])
+
+
 FOLDER_DEFS = [
     ("home_code", "🎮 CODE GAME", "Thư mục khách hàng"),
     ("home_mini", "🎯 MINIGAME LIVE", "Thư mục khách hàng"),
