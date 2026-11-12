@@ -39,12 +39,16 @@ def kb(rows):
     return b.as_markup()
 
 def home_kb():
-    return kb([
+    b = InlineKeyboardBuilder()
+    for label, data in [
         ("🎮 CODE GAME","m:code"),("🎯 MINIGAME LIVE","m:mini"),
         ("🔗 CODE SHARE","m:share"),("🛠 DỊCH VỤ KHÁC","m:services"),
         ("👤 TÀI KHOẢN","m:account"),("💳 NẠP TIỀN","m:deposit"),
         ("📋 LỊCH SỬ ĐƠN","m:orders"),("📞 LIÊN HỆ ADMIN","m:contact")
-    ])
+    ]:
+        b.button(text=label, callback_data=data)
+    b.adjust(2)
+    return b.as_markup()
 
 def back(): return kb([("⬅️ MENU CHÍNH","m:home")])
 def admin_kb(): return kb([
