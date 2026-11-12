@@ -42,32 +42,73 @@ def kb(rows):
     b.adjust(1)
     return b.as_markup()
 
-def home_kb(is_admin=False):
+
+FOLDER_DEFS = [
+    ("home_code", "🎮 CODE GAME", "Thư mục khách hàng"),
+    ("home_mini", "🎯 MINIGAME LIVE", "Thư mục khách hàng"),
+    ("home_share", "🔗 CODE SHARE", "Thư mục khách hàng"),
+    ("home_services", "🛠 DỊCH VỤ KHÁC", "Thư mục khách hàng"),
+    ("home_account", "👤 TÀI KHOẢN", "Thư mục khách hàng"),
+    ("home_deposit", "💳 NẠP TIỀN", "Thư mục khách hàng"),
+    ("home_orders", "📋 LỊCH SỬ ĐƠN", "Thư mục khách hàng"),
+    ("home_contact", "📞 LIÊN HỆ ADMIN", "Thư mục khách hàng"),
+    ("admin_add", "➕ THÊM SẢN PHẨM", "Thư mục quản trị"),
+    ("admin_products", "📦 QUẢN LÝ SẢN PHẨM", "Thư mục quản trị"),
+    ("admin_deposits", "💰 DUYỆT NẠP TIỀN", "Thư mục quản trị"),
+    ("admin_orders", "🧾 QUẢN LÝ ĐƠN HÀNG", "Thư mục quản trị"),
+    ("admin_payment", "🏦 CÀI ĐẶT THANH TOÁN", "Thư mục quản trị"),
+    ("admin_notify", "📢 THÔNG BÁO THEO ID", "Thư mục quản trị"),
+    ("admin_notifyall", "📣 THÔNG BÁO TẤT CẢ ID", "Thư mục quản trị"),
+    ("admin_minitext", "✏️ NỘI DUNG MINIGAME", "Thư mục quản trị"),
+]
+
+async def folder_is_on(key):
+    async with aiosqlite.connect(DB) as db:
+        cur = await db.execute("SELECT value FROM settings WHERE key=?", (f"folder:{key}",))
+        row = await cur.fetchone()
+    return row is None or row[0] != "0"
+
+async def home_kb(is_admin=False):
     b = InlineKeyboardBuilder()
     items = [
-        ("🎮 CODE GAME","m:code"),("🎯 MINIGAME LIVE","m:mini"),
-        ("🔗 CODE SHARE","m:share"),("🛠 DỊCH VỤ KHÁC","m:services"),
-        ("👤 TÀI KHOẢN","m:account"),("💳 NẠP TIỀN","m:deposit"),
-        ("📋 LỊCH SỬ ĐƠN","m:orders"),("📞 LIÊN HỆ ADMIN","m:contact")
+        ("home_code", "🎮 CODE GAME","m:code"),("home_mini","🎯 MINIGAME LIVE","m:mini"),
+        ("home_share","🔗 CODE SHARE","m:share"),("home_services","🛠 DỊCH VỤ KHÁC","m:services"),
+        ("home_account","👤 TÀI KHOẢN","m:account"),("home_deposit","💳 NẠP TIỀN","m:deposit"),
+        ("home_orders","📋 LỊCH SỬ ĐƠN","m:orders"),("home_contact","📞 LIÊN HỆ ADMIN","m:contact")
     ]
+    for key, label, data in items:
+        if await folder_is_on(key):
+            b.button(text=label, callback_data=data)
     if is_admin:
-        items.append(("🛡 TRUNG TÂM QUẢN TRỊ","m:admin"))
-    for label, data in items:
-        b.button(text=label, callback_data=data)
+        b.button(text="🛡 TRUNG TÂM QUẢN TRỊ", callback_data="m:admin")
     b.adjust(2)
     return b.as_markup()
 
-def back(): return kb([("⬅️ MENU CHÍNH","m:home")])
-def admin_kb():
+async def admin_kb():
     b = InlineKeyboardBuilder()
-    for label, data in [
-        ("➕ THÊM SẢN PHẨM","a:add"),("📦 QUẢN LÝ SẢN PHẨM","a:products"),
-        ("💰 DUYỆT NẠP TIỀN","a:deposits"),("🧾 QUẢN LÝ ĐƠN HÀNG","a:orders"),
-        ("🏦 CÀI ĐẶT THANH TOÁN","a:payment"),("📢 THÔNG BÁO THEO ID","a:notify"),("📣 THÔNG BÁO TẤT CẢ ID","a:notifyall"),("✏️ NỘI DUNG MINIGAME","a:minitext"),
-        ("🔄 LÀM MỚI MENU","a:refresh"),("⬅️ MENU CHÍNH","m:home")
-    ]:
-        b.button(text=label, callback_data=data)
+    items = [
+        ("admin_add","➕ THÊM SẢN PHẨM","a:add"),("admin_products","📦 QUẢN LÝ SẢN PHẨM","a:products"),
+        ("admin_deposits","💰 DUYỆT NẠP TIỀN","a:deposits"),("admin_orders","🧾 QUẢN LÝ ĐƠN HÀNG","a:orders"),
+        ("admin_payment","🏦 CÀI ĐẶT THANH TOÁN","a:payment"),("admin_notify","📢 THÔNG BÁO THEO ID","a:notify"),
+        ("admin_notifyall","📣 THÔNG BÁO TẤT CẢ ID","a:notifyall"),("admin_minitext","✏️ NỘI DUNG MINIGAME","a:minitext")
+    ]
+    for key, label, data in items:
+        if await folder_is_on(key):
+            b.button(text=label, callback_data=data)
+    b.button(text="⚙️ BẬT/TẮT TẤT CẢ THƯ MỤC", callback_data="a:folders")
+    b.button(text="🔄 LÀM MỚI MENU", callback_data="a:refresh")
+    b.button(text="⬅️ MENU CHÍNH", callback_data="m:home")
     b.adjust(2)
+    return b.as_markup()
+
+async def folders_kb():
+    b = InlineKeyboardBuilder()
+    for key, label, group in FOLDER_DEFS:
+        enabled = await folder_is_on(key)
+        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | {label}", callback_data=f"af:{key}")
+    b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
+    b.button(text="⬅️ MENU ADMIN", callback_data="a:refresh")
+    b.adjust(1)
     return b.as_markup()
 
 def admin_products_kb(rows):
@@ -113,21 +154,25 @@ async def page_products(message, category, game=""):
 @dp.message(CommandStart())
 async def start(m: Message):
     await ensure_user(m.from_user)
-    await m.answer(f"🏮🏮🏮🏮\n\n🔥 Xin chào, {m.from_user.full_name}!\n\n👥 Chào mừng đến NGHIỆN CODE.\nChọn dịch vụ bên dưới:",reply_markup=home_kb(m.from_user.id in ADMINS))
+    await m.answer(f"🏮🏮🏮🏮\n\n🔥 Xin chào, {m.from_user.full_name}!\n\n👥 Chào mừng đến NGHIỆN CODE.\nChọn dịch vụ bên dưới:",reply_markup=await home_kb(m.from_user.id in ADMINS))
 
 @dp.message(Command("admin"))
 async def admin(m: Message):
     if m.from_user.id not in ADMINS: return await m.answer("Bạn không có quyền.")
-    await m.answer("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
+    await m.answer("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=await admin_kb())
 
 @dp.callback_query(F.data.startswith("m:"))
 async def menus(c: CallbackQuery):
     key=c.data.split(":")[1]
-    if key=="home": return await c.message.edit_text("🏠 MENU CHÍNH",reply_markup=home_kb(c.from_user.id in ADMINS))
+    if key=="home": return await c.message.edit_text("🏠 MENU CHÍNH",reply_markup=await home_kb(c.from_user.id in ADMINS))
     if key=="admin":
         if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
         await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
         return await c.answer()
+    if key in {"code","mini","share","services","account","deposit","orders","contact"}:
+        folder_key = {"code":"home_code","mini":"home_mini","share":"home_share","services":"home_services","account":"home_account","deposit":"home_deposit","orders":"home_orders","contact":"home_contact"}[key]
+        if not await folder_is_on(folder_key):
+            return await c.answer("Thư mục này hiện đang tắt.", show_alert=True)
     if key=="code":
         await c.message.edit_text("Chọn game CODE GAME:",reply_markup=kb([(g,f"game:{g}") for g in GAMES]+[("⬅️ Menu","m:home")]))
     elif key=="share":
@@ -179,10 +224,31 @@ async def buy(c: CallbackQuery):
     await c.message.answer("Vui lòng nhập tên tài khoản cần đặt. Nếu không yêu cầu tài khoản, nhập dấu -.")
     await c.answer()
 
+
+@dp.callback_query(F.data.startswith("af:"))
+async def admin_toggle_folder(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    key = c.data.split(":",1)[1]
+    if key not in {item[0] for item in FOLDER_DEFS}:
+        return await c.answer("Thư mục không hợp lệ.", show_alert=True)
+    current = await folder_is_on(key)
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder:{key}", "0" if current else "1"))
+        await db.commit()
+    await c.message.edit_text("⚙️ BẬT/TẮT THƯ MỤC\\nĐã cập nhật trạng thái. Chọn tiếp thư mục:", reply_markup=await folders_kb())
+    await c.answer("Đã đổi trạng thái.")
+
 @dp.callback_query(F.data.startswith("a:"))
 async def admin_actions(c: CallbackQuery):
     if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
     key=c.data.split(":")[1]
+    folder_key = {"add":"admin_add","products":"admin_products","deposits":"admin_deposits","orders":"admin_orders","payment":"admin_payment","notify":"admin_notify","notifyall":"admin_notifyall","minitext":"admin_minitext"}.get(key)
+    if folder_key and not await folder_is_on(folder_key):
+        return await c.answer("Thư mục quản trị này hiện đang tắt.", show_alert=True)
+    if key=="folders":
+        await c.message.edit_text("⚙️ BẬT/TẮT THƯ MỤC\\nBấm ON/OFF để thay đổi trạng thái:", reply_markup=await folders_kb())
+        return await c.answer()
     if key=="refresh":
         await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
     elif key=="add":
