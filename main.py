@@ -78,6 +78,26 @@ async def init_db():
             created_at TEXT NOT NULL, UNIQUE(user_id,alias))""")
         await db.execute("""CREATE TABLE IF NOT EXISTS bot_settings(
             key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS menu_buttons(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'callback', value TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1)""")
+        button_count = (await (await db.execute("SELECT COUNT(*) FROM menu_buttons")).fetchone())[0]
+        if button_count == 0:
+            await db.executemany(
+                "INSERT INTO menu_buttons(label,kind,value,position) VALUES(?,?,?,?)",
+                [
+                    ("🎮  CHỌN SITE GAME", "callback", "sites", 10),
+                    ("🛒  MUA DỊCH VỤ GAME", "callback", "cat:GAME", 20),
+                    ("🏆  MINIGAME LIVE", "callback", "minigames", 30),
+                    ("🧩  DỊCH VỤ KHÁC", "callback", "other_services", 40),
+                    ("👤  TÀI KHOẢN CỦA TÔI", "callback", "account", 50),
+                    ("💳  NẠP TIỀN", "callback", "deposit", 60),
+                    ("📦  LỊCH SỬ ĐƠN HÀNG", "callback", "orders", 70),
+                    ("📖  HƯỚNG DẪN SỬ DỤNG", "callback", "guide", 80),
+                    ("☎️  LIÊN HỆ HỖ TRỢ", "callback", "support", 90),
+                ])
+
         await db.execute("""CREATE TABLE IF NOT EXISTS source_codes(
             id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
             source_username TEXT NOT NULL, source_chat_id INTEGER NOT NULL,
@@ -115,23 +135,22 @@ async def get_balance(uid):
 
 GAME_SITES = ["HI88", "NEW88", "XX8", "AD88", "U888", "ABC8", "MM88", "F168", "ON68", "GK88", "78WIN", "SHBET"]
 
-def home_kb(uid):
+async def home_kb(uid):
     kb = InlineKeyboardBuilder()
-    for label, data in [
-        ("🎮  CHỌN SITE GAME", "sites"),
-        ("🛒  MUA DỊCH VỤ GAME", "cat:GAME"),
-        ("🏆  MINIGAME LIVE", "minigames"),
-        ("🧩  DỊCH VỤ KHÁC", "other_services"),
-        ("👤  TÀI KHOẢN CỦA TÔI", "account"),
-        ("💳  NẠP TIỀN", "deposit"),
-        ("📦  LỊCH SỬ ĐƠN HÀNG", "orders"),
-        ("📖  HƯỚNG DẪN SỬ DỤNG", "guide"),
-        ("☎️  LIÊN HỆ HỖ TRỢ", "support"),
-    ]:
-        kb.button(text=label, callback_data=data)
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,label,kind,value FROM menu_buttons WHERE active=1 ORDER BY position,id"
+        )).fetchall()
+    for button_id, label, kind, value in rows:
+        if kind == "url":
+            kb.button(text=label, url=value)
+        elif kind == "message":
+            kb.button(text=label, callback_data=f"custombtn:{button_id}")
+        else:
+            kb.button(text=label, callback_data=value)
     if is_admin(uid):
         kb.button(text="🛠  TRANG QUẢN TRỊ", callback_data="admin")
-    kb.adjust(1, 2, 2, 2, 1, 1)
+    kb.adjust(1)
     return kb.as_markup()
 
 def sites_kb():
@@ -546,7 +565,7 @@ async def start(m: Message):
         "📦 Quản lý đơn hàng, dịch vụ.\\n\\n"
         "👇 <b>VUI LÒNG CHỌN CHỨC NĂNG</b>"
     )
-    await m.answer(welcome, reply_markup=home_kb(m.from_user.id))
+    await m.answer(welcome, reply_markup=await home_kb(m.from_user.id))
 
 @dp.message(Command("menu"))
 async def menu(m: Message):
@@ -593,7 +612,7 @@ async def deposit_request(m: Message):
 
 @dp.callback_query(F.data == "home")
 async def cb_home(c: CallbackQuery):
-    await c.message.edit_text("━━━━━━━━━━━━━━━━━━\\n🏠 <b>MENU CHÍNH</b>\\n━━━━━━━━━━━━━━━━━━\\n\\nChọn chức năng bạn muốn sử dụng.", reply_markup=home_kb(c.from_user.id))
+    await c.message.edit_text("━━━━━━━━━━━━━━━━━━\\n🏠 <b>MENU CHÍNH</b>\\n━━━━━━━━━━━━━━━━━━\\n\\nChọn chức năng bạn muốn sử dụng.", reply_markup=await home_kb(c.from_user.id))
     await c.answer()
 
 @dp.callback_query(F.data == "sites")
@@ -850,9 +869,32 @@ async def cb_admin(c: CallbackQuery):
         "🛠 <b>ADMIN PANEL – LỆNH QUẢN LÝ</b>\n\n"
         "<b>Sản phẩm:</b>\n/addservice GAME|SITE|Tên dịch vụ|Giá\n/addservice SMS|Tên dịch vụ|Giá\n/addservice PRX|Tên proxy|Giá\n/delservice ID\n\n"
         "<b>Minigame:</b>\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\n/roomstatus ID|open hoặc closed\n/result ID|Nội dung kết quả\n/roomsadmin\n\n"
-        "<b>Tài khoản & nạp:</b>\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats",
+        "<b>Tài khoản & nạp:</b>\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats\n\n"
+        "<b>Quản lý nút menu:</b>\n/buttonlist – xem danh sách nút\n"
+        "/buttonadd Tên nút|callback/url/message|Giá trị\n"
+        "/buttonedit ID|Tên mới|callback/url/message|Giá trị mới\n"
+        "/buttondel ID – xóa nút",
         reply_markup=back_kb())
     await c.answer()
+
+@dp.callback_query(F.data.startswith("custombtn:"))
+async def cb_custom_menu_button(c: CallbackQuery):
+    try:
+        button_id = int(c.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await c.answer("Nút không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT label,value FROM menu_buttons WHERE id=? AND kind='message' AND active=1",
+            (button_id,))).fetchone()
+    if not row:
+        await c.answer("Nút này hiện không hoạt động.", show_alert=True)
+        return
+    label, message_text = row
+    await c.message.answer(f"<b>{escape(label)}</b>\\n\\n{escape(message_text)}")
+    await c.answer()
+
 
 @dp.callback_query(F.data.startswith("buy:"))
 async def cb_buy(c: CallbackQuery):
@@ -1268,12 +1310,101 @@ async def stats(m: Message):
         rooms = (await (await db.execute("SELECT COUNT(*) FROM minigame_rooms")).fetchone())[0]
     await m.answer(f"📊 <b>THỐNG KÊ</b>\nNgười dùng: {users}\nĐơn hàng: {orders}\nNạp chờ duyệt: {pending}\nPhòng Minigame: {rooms}")
 
+@dp.message(Command("buttonlist"))
+async def button_list(m: Message):
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền.")
+        return
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,label,kind,value,position,active FROM menu_buttons ORDER BY position,id"
+        )).fetchall()
+    if not rows:
+        await m.answer("Menu chưa có nút nào.")
+        return
+    lines = ["🧩 <b>DANH SÁCH NÚT MENU</b>"]
+    for bid, label, kind, value, position, active in rows:
+        shown_value = value if kind != "message" else (value[:55] + ("…" if len(value) > 55 else ""))
+        lines.append(f"\\n<b>#{bid} · {escape(label)}</b>\\nLoại: {escape(kind)} · Giá trị: <code>{escape(shown_value)}</code>\\nVị trí: {position} · Trạng thái: {'Đang hiện' if active else 'Đã ẩn'}")
+    await m.answer("\\n".join(lines))
+
+
+@dp.message(Command("buttonadd"))
+async def button_add(m: Message):
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền.")
+        return
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|", 2)]
+    if len(parts) != 3 or not all(parts):
+        await m.answer("Cú pháp: <code>/buttonadd Tên nút|callback/url/message|Giá trị</code>\\nVí dụ: <code>/buttonadd 🌐 WEBSITE|url|https://example.com</code>\\nHoặc: <code>/buttonadd 📣 THÔNG BÁO|message|Nội dung</code>")
+        return
+    label, kind, value = parts
+    kind = kind.lower()
+    allowed = {"sites","cat:GAME","minigames","other_services","account","deposit","orders","guide","support","home"}
+    if len(label) > 60 or len(value) > 1000 or kind not in {"callback","url","message"}:
+        await m.answer("Tên/giá trị quá dài hoặc loại nút không hợp lệ.")
+        return
+    if kind == "callback" and value not in allowed:
+        await m.answer("Callback chưa hỗ trợ. Dùng: " + ", ".join(sorted(allowed)))
+        return
+    if kind == "url" and not (value.startswith("https://") or value.startswith("http://")):
+        await m.answer("Đường dẫn phải bắt đầu bằng http:// hoặc https://.")
+        return
+    async with await db_connect() as db:
+        position = (await (await db.execute("SELECT COALESCE(MAX(position),0)+10 FROM menu_buttons")).fetchone())[0]
+        cur = await db.execute("INSERT INTO menu_buttons(label,kind,value,position,active) VALUES(?,?,?,?,1)",(label,kind,value,position))
+        button_id = cur.lastrowid
+        await db.commit()
+    await m.answer(f"✅ Đã thêm nút menu <b>#{button_id}</b>: {escape(label)}.")
+
+
+@dp.message(Command("buttonedit"))
+async def button_edit(m: Message):
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền.")
+        return
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|", 3)]
+    if len(parts) != 4 or not parts[0].isdigit() or not all(parts):
+        await m.answer("Cú pháp: <code>/buttonedit ID|Tên mới|callback/url/message|Giá trị mới</code>")
+        return
+    bid,label,kind,value = int(parts[0]),parts[1],parts[2].lower(),parts[3]
+    allowed = {"sites","cat:GAME","minigames","other_services","account","deposit","orders","guide","support","home"}
+    if len(label)>60 or len(value)>1000 or kind not in {"callback","url","message"}:
+        await m.answer("Tên/giá trị quá dài hoặc loại nút không hợp lệ.")
+        return
+    if kind=="callback" and value not in allowed:
+        await m.answer("Callback chưa hỗ trợ.")
+        return
+    if kind=="url" and not (value.startswith("https://") or value.startswith("http://")):
+        await m.answer("Đường dẫn phải bắt đầu bằng http:// hoặc https://.")
+        return
+    async with await db_connect() as db:
+        cur=await db.execute("UPDATE menu_buttons SET label=?,kind=?,value=? WHERE id=?",(label,kind,value,bid))
+        await db.commit()
+    await m.answer("✅ Đã cập nhật nút." if cur.rowcount else "Không tìm thấy ID nút.")
+
+
+@dp.message(Command("buttondel"))
+async def button_delete(m: Message):
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền.")
+        return
+    parts=(m.text or "").split()
+    if len(parts)!=2 or not parts[1].isdigit():
+        await m.answer("Cú pháp: <code>/buttondel ID</code>")
+        return
+    async with await db_connect() as db:
+        cur=await db.execute("DELETE FROM menu_buttons WHERE id=?",(int(parts[1]),))
+        await db.commit()
+    await m.answer("✅ Đã xóa nút." if cur.rowcount else "Không tìm thấy ID nút.")
+
+
 @dp.message(Command("admin"))
 async def admin_cmd(m: Message):
     if not is_admin(m.from_user.id):
         await m.answer("Bạn không có quyền.")
         return
-    await m.answer("🛠 <b>LỆNH ADMIN</b>\n/addservice GAME|SITE|Tên|Giá\n/addservice SMS|Tên|Giá\n/addservice PRX|Tên|Giá\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\n/roomstatus ID|open\n/result ID|Kết quả\n/roomsadmin\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats")
+    await m.answer("🛠 <b>LỆNH ADMIN</b>\\n/addservice GAME|SITE|Tên|Giá\\n/addservice SMS|Tên|Giá\\n/addservice PRX|Tên|Giá\\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\\n/roomstatus ID|open\\n/result ID|Kết quả\\n/roomsadmin\\n/duyetnap ID\\n/huy nap ID\\n/setbalance USER_ID SỐ_TIỀN\\n/stats\\n\\n<b>QUẢN LÝ NÚT MENU</b>\\n/buttonlist\\n/buttonadd Tên|callback/url/message|Giá trị\\n/buttonedit ID|Tên mới|callback/url/message|Giá trị mới\\n/buttondel ID")
 
 async def main():
     await init_db()
