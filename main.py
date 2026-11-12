@@ -108,6 +108,7 @@ async def admin_kb():
     ]
     b.button(text="📊 TỔNG QUAN / DOANH THU", callback_data="am:stats")
     b.button(text="👥 QUẢN LÝ THÀNH VIÊN", callback_data="am:users")
+    b.button(text="➕➖ CỘNG / TRỪ SỐ DƯ", callback_data="am:balance")
     for key, label, data in items:
         if await folder_is_on(key):
             b.button(text=label, callback_data=data)
@@ -371,6 +372,9 @@ async def admin_actions(c: CallbackQuery):
     elif key=="users":
         pending[c.from_user.id]={"admin_user_search":True}
         await c.message.edit_text("👥 QUẢN LÝ THÀNH VIÊN\\nNhập Telegram ID hoặc tên để tìm:",reply_markup=kb([("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+    elif key=="balance":
+        pending[c.from_user.id]={"admin_user_search":True}
+        await c.message.edit_text("➕➖ ĐIỀU CHỈNH SỐ DƯ\\nNhập Telegram ID hoặc tên thành viên cần thao tác:",reply_markup=kb([("⬅️ MENU QUẢN TRỊ","a:refresh")]))
     elif key=="payment":
         pending[c.from_user.id]="payment"
         await c.message.answer("🏦 CÀI ĐẶT THANH TOÁN\\nNhập: TÊN NGÂN HÀNG|SỐ TK|CHỦ TK|NỘI DUNG CHUYỂN KHOẢN")
