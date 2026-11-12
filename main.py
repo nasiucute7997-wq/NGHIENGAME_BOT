@@ -173,7 +173,7 @@ async def menus(c: CallbackQuery):
     if key=="home": return await c.message.edit_text("🏠 MENU CHÍNH",reply_markup=await home_kb(c.from_user.id in ADMINS))
     if key=="admin":
         if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
-        await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
+        await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=await admin_kb())
         return await c.answer()
     if key in {"code","mini","share","services","account","deposit","orders","contact"}:
         folder_key = {"code":"home_code","mini":"home_mini","share":"home_share","services":"home_services","account":"home_account","deposit":"home_deposit","orders":"home_orders","contact":"home_contact"}[key]
@@ -256,7 +256,7 @@ async def admin_actions(c: CallbackQuery):
         await c.message.edit_text("⚙️ BẬT/TẮT THƯ MỤC\\nBấm ON/OFF để thay đổi trạng thái:", reply_markup=await folders_kb())
         return await c.answer()
     if key=="refresh":
-        await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
+        await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=await admin_kb())
     elif key=="add":
         await c.message.edit_text("➕ THÊM SẢN PHẨM\\nBƯỚC 1/4 — Chọn danh mục:",reply_markup=kb([("🎮 GAME","apw:GAME"),("🎯 MINIGAME LIVE","apw:MINIGAME LIVE"),("🔗 SHARE","apw:SHARE"),("📩 SMS","apw:SMS"),("🌐 PRX","apw:PRX"),("⬅️ MENU ADMIN","a:refresh")]))
     elif key=="products":
@@ -317,7 +317,7 @@ async def add_product_confirm(c: CallbackQuery):
     action=c.data.split(":",1)[1]
     if action=="cancel":
         pending.pop(c.from_user.id,None)
-        await c.message.edit_text("Đã hủy thêm sản phẩm.",reply_markup=admin_kb())
+        await c.message.edit_text("Đã hủy thêm sản phẩm.",reply_markup=await admin_kb())
     elif action=="edit":
         task["add_stage"]="name"
         pending[c.from_user.id]=task
@@ -327,7 +327,7 @@ async def add_product_confirm(c: CallbackQuery):
             await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",(task["category"],task["game"],task["name"],task["price"],task["description"]))
             await db.commit()
         pending.pop(c.from_user.id,None)
-        await c.message.edit_text("✅ Đã lưu sản phẩm.",reply_markup=admin_kb())
+        await c.message.edit_text("✅ Đã lưu sản phẩm.",reply_markup=await admin_kb())
     await c.answer()
 
 @dp.callback_query(F.data.startswith("an:"))
@@ -339,17 +339,17 @@ async def admin_notification_action(c: CallbackQuery):
         return await c.answer("Phiên thông báo đã hết. Hãy thao tác lại.",show_alert=True)
     if action=="cancel":
         pending.pop(c.from_user.id,None)
-        await c.message.edit_text("Đã hủy gửi thông báo.",reply_markup=admin_kb())
+        await c.message.edit_text("Đã hủy gửi thông báo.",reply_markup=await admin_kb())
         return await c.answer()
     if action=="send" and task.get("notify_stage")=="confirm":
         try:
             await c.bot.send_message(task["target_id"],task["body"])
         except Exception as e:
             pending.pop(c.from_user.id,None)
-            await c.message.edit_text(f"❌ Không gửi được đến ID {task['target_id']}. Có thể người nhận chưa từng mở bot hoặc đã chặn bot. Chi tiết: {str(e)[:180]}",reply_markup=admin_kb())
+            await c.message.edit_text(f"❌ Không gửi được đến ID {task['target_id']}. Có thể người nhận chưa từng mở bot hoặc đã chặn bot. Chi tiết: {str(e)[:180]}",reply_markup=await admin_kb())
             return await c.answer("Gửi thất bại.",show_alert=True)
         pending.pop(c.from_user.id,None)
-        await c.message.edit_text(f"✅ Đã gửi thông báo thành công đến Telegram ID {task['target_id']}.",reply_markup=admin_kb())
+        await c.message.edit_text(f"✅ Đã gửi thông báo thành công đến Telegram ID {task['target_id']}.",reply_markup=await admin_kb())
         return await c.answer("Đã gửi.")
     if action=="sendall" and task.get("notify_stage")=="confirm_all":
         async with aiosqlite.connect(DB) as db:
@@ -365,7 +365,7 @@ async def admin_notification_action(c: CallbackQuery):
             except Exception:
                 failed+=1
         pending.pop(c.from_user.id,None)
-        await c.message.edit_text(f"📣 ĐÃ GỬI THÔNG BÁO TOÀN BOT\\nThành công: {sent}\\nKhông gửi được: {failed}\\nTổng tài khoản: {len(recipients)}",reply_markup=admin_kb())
+        await c.message.edit_text(f"📣 ĐÃ GỬI THÔNG BÁO TOÀN BOT\\nThành công: {sent}\\nKhông gửi được: {failed}\\nTổng tài khoản: {len(recipients)}",reply_markup=await admin_kb())
         return await c.answer("Đã hoàn tất gửi.")
     return await c.answer("Thao tác không hợp lệ.",show_alert=True)
 
@@ -556,7 +556,7 @@ async def process_admin_text(m: Message):
         async with aiosqlite.connect(DB) as db:
             await db.execute("UPDATE products SET price=? WHERE id=?",(int(raw),pid)); await db.commit()
         pending.pop(uid,None)
-        await m.answer(f"✅ Đã cập nhật giá sản phẩm #{pid}: {int(raw):,}đ.",reply_markup=admin_kb())
+        await m.answer(f"✅ Đã cập nhật giá sản phẩm #{pid}: {int(raw):,}đ.",reply_markup=await admin_kb())
         return True
     if task=="payment":
         p=(m.text or "").split("|")
