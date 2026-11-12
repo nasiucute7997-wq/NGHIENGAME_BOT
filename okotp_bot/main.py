@@ -924,16 +924,18 @@ async def receive_purchase_account(m: Message):
             "SELECT balance FROM users WHERE user_id=?", (m.from_user.id,))).fetchone()
         balance = int(balance_row[0]) if balance_row else 0
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ XÁC NHẬN THANH TOÁN", callback_data=f"buyconfirm:{sid}")
+    kb.button(text="📩 ĐẶT DỊCH VỤ", callback_data=f"buyconfirm:{sid}")
+    kb.button(text="✏️ SỬA TÊN TÀI KHOẢN", callback_data=f"buyedit:{sid}")
     kb.button(text="❌ HỦY ĐƠN", callback_data="buycancel")
     kb.adjust(1)
     await m.answer(
-        f"📋 <b>XÁC NHẬN ĐƠN HÀNG</b>\n\n"
-        f"Game: <b>{escape(game)}</b>\nDịch vụ: <b>{escape(name)}</b>\n"
-        f"Tài khoản: <code>{escape(account_name)}</code>\n"
-        f"Thanh toán: <b>{money(price)}</b>\nSố dư hiện tại: <b>{money(balance)}</b>\n"
-        f"Số dư sau thanh toán: <b>{money(balance-price)}</b>\n\n"
-        "Nhấn xác nhận để bot tự trừ số dư và tạo đơn.",
+        f"📋 <b>XÁC NHẬN YÊU CẦU DỊCH VỤ</b>\\n\\n"
+        f"🎮 Site: <b>{escape(game)}</b>\\n"
+        f"📝 Dịch vụ: <b>{escape(name)}</b>\\n"
+        f"👤 Tài khoản: <code>{escape(account_name)}</code>\\n"
+        f"💰 Giá: <b>{money(price)}</b>\\n\\n"
+        "Bấm <b>ĐẶT DỊCH VỤ</b> để gửi yêu cầu đến ADMIN.\\n"
+        "Đơn chỉ được thực hiện sau khi ADMIN xác nhận.",
         reply_markup=kb.as_markup())
 
 
@@ -946,12 +948,37 @@ async def cb_buy_cancel(c: CallbackQuery):
     await c.answer("Đã hủy.")
 
 
+@dp.callback_query(F.data.startswith("buyedit:"))
+async def cb_buy_edit(c: CallbackQuery):
+    try:
+        sid = int(c.data.split(":", 1)[1])
+    except ValueError:
+        await c.answer("Đơn không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT d.game,s.name,s.price FROM purchase_drafts d JOIN services s ON s.id=d.service_id "
+            "WHERE d.user_id=? AND d.service_id=? AND s.active=1",
+            (c.from_user.id, sid))).fetchone()
+        if not row:
+            await c.answer("Phiên đặt dịch vụ đã hết hạn.", show_alert=True)
+            return
+        game, name, price = row
+        await db.execute("UPDATE purchase_drafts SET account_name='' WHERE user_id=?", (c.from_user.id,))
+        await db.commit()
+    await c.message.edit_text(
+        f"📝 <b>NHẬP LẠI TÀI KHOẢN</b>\\nSite: <b>{escape(game)}</b>\\n"
+        f"Dịch vụ: <b>{escape(name)}</b> · {money(price)}\\n\\n"
+        "Vui lòng gửi chính xác tên tài khoản cần sử dụng. Không gửi mật khẩu hoặc OTP.")
+    await c.answer()
+
+
 @dp.callback_query(F.data.startswith("buyconfirm:"))
 async def cb_buy_confirm(c: CallbackQuery):
     try:
         sid = int(c.data.split(":", 1)[1])
     except ValueError:
-        await c.answer("Đơn không hợp lệ.", show_alert=True)
+        await c.answer("Yêu cầu không hợp lệ.", show_alert=True)
         return
     async with await db_connect() as db:
         await db.execute("BEGIN IMMEDIATE")
@@ -961,34 +988,100 @@ async def cb_buy_confirm(c: CallbackQuery):
             (c.from_user.id, sid))).fetchone()
         if not draft or not draft[1]:
             await db.rollback()
-            await c.answer("Phiên mua hàng đã hết hạn. Vui lòng chọn lại.", show_alert=True)
+            await c.answer("Phiên đặt dịch vụ đã hết hạn. Vui lòng chọn lại.", show_alert=True)
             return
         game, account_name, name, price = draft
-        debit = await db.execute(
-            "UPDATE users SET balance=balance-? WHERE user_id=? AND balance>=?",
-            (price, c.from_user.id, price))
-        if debit.rowcount != 1:
-            await db.rollback()
-            balance = await get_balance(c.from_user.id)
-            await c.answer(f"Số dư không đủ. Hiện có {money(balance)}.", show_alert=True)
-            return
         cur = await db.execute(
             "INSERT INTO orders(user_id,service_id,service_name,price,status,created_at,game,account_name) "
             "VALUES(?,?,?,?,?,?,?,?)",
-            (c.from_user.id, sid, name, price, "confirmed", now(), game, account_name))
+            (c.from_user.id, sid, name, price, "pending_admin", now(), game, account_name))
         oid = cur.lastrowid
         await db.execute("DELETE FROM purchase_drafts WHERE user_id=?", (c.from_user.id,))
         await db.commit()
-        balance_after = await get_balance(c.from_user.id)
+
+    username = f"@{c.from_user.username}" if c.from_user.username else "Không có username"
+    admin_kb = InlineKeyboardBuilder()
+    admin_kb.button(text="✅ ADMIN XÁC NHẬN", callback_data=f"orderapprove:{oid}")
+    admin_kb.button(text="❌ TỪ CHỐI", callback_data=f"orderreject:{oid}")
+    admin_kb.adjust(1)
+    admin_text = (
+        f"📥 <b>YÊU CẦU DỊCH VỤ MỚI #{oid}</b>\\n\\n"
+        f"Khách: {escape(c.from_user.full_name)} ({escape(username)})\\n"
+        f"Telegram ID: <code>{c.from_user.id}</code>\\n"
+        f"Site: <b>{escape(game)}</b>\\nDịch vụ: <b>{escape(name)}</b>\\n"
+        f"Tài khoản: <code>{escape(account_name)}</code>\\nGiá: <b>{money(price)}</b>\\n"
+        "Trạng thái: <b>Chờ ADMIN xác nhận</b>"
+    )
+    sent = False
+    for admin_id in ADMIN_IDS:
+        try:
+            await c.bot.send_message(admin_id, admin_text, reply_markup=admin_kb.as_markup())
+            sent = True
+        except Exception:
+            logging.exception("Cannot send service order to admin %s", admin_id)
     await c.message.edit_text(
-        f"🎉 <b>THANH TOÁN THÀNH CÔNG</b>\n\n"
-        f"Mã đơn: <b>#{oid}</b>\nGame: <b>{escape(game)}</b>\n"
-        f"Dịch vụ: <b>{escape(name)}</b>\nTài khoản: <code>{escape(account_name)}</code>\n"
-        f"Đã trừ: <b>{money(price)}</b>\nSố dư còn lại: <b>{money(balance_after)}</b>\n"
-        "Trạng thái: <b>Đã xác nhận thanh toán</b>\n\n"
-        "Đơn đã được lưu vào LỊCH SỬ ĐƠN HÀNG.",
+        f"📨 <b>ĐÃ GỬI YÊU CẦU ĐẾN ADMIN</b>\\n\\n"
+        f"Mã đơn: <b>#{oid}</b>\\nSite: <b>{escape(game)}</b>\\n"
+        f"Dịch vụ: <b>{escape(name)}</b>\\nTài khoản: <code>{escape(account_name)}</code>\\n"
+        f"Giá: <b>{money(price)}</b>\\n\\n"
+        + ("ADMIN sẽ xem và xác nhận trước khi thực hiện." if sent else
+           "Bot chưa gửi được thông báo cho ADMIN. Vui lòng liên hệ ADMIN trực tiếp; yêu cầu vẫn được lưu."),
         reply_markup=back_kb())
-    await c.answer("Thanh toán thành công!")
+    await c.answer("Đã gửi yêu cầu.")
+
+
+async def admin_update_order(c: CallbackQuery, approved: bool):
+    if not is_admin(c.from_user.id):
+        await c.answer("Bạn không có quyền xử lý đơn.", show_alert=True)
+        return
+    try:
+        oid = int(c.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await c.answer("Mã đơn không hợp lệ.", show_alert=True)
+        return
+    new_status = "admin_confirmed" if approved else "rejected"
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT user_id,game,service_name,price,account_name,status FROM orders WHERE id=?",
+            (oid,))).fetchone()
+        if not row:
+            await c.answer("Không tìm thấy đơn.", show_alert=True)
+            return
+        uid, game, name, price, account_name, status = row
+        if status != "pending_admin":
+            await c.answer("Đơn này đã được xử lý trước đó.", show_alert=True)
+            return
+        await db.execute("UPDATE orders SET status=? WHERE id=?", (new_status, oid))
+        await db.commit()
+    try:
+        message = (
+            f"✅ <b>ADMIN ĐÃ XÁC NHẬN ĐƠN #{oid}</b>\\n"
+            f"Site: <b>{escape(game)}</b>\\nDịch vụ: <b>{escape(name)}</b>\\n"
+            f"Tài khoản: <code>{escape(account_name)}</code>\\n"
+            "Đơn đã được ADMIN xác nhận và chuyển sang bước thực hiện."
+            if approved else
+            f"❌ <b>ĐƠN #{oid} CHƯA ĐƯỢC CHẤP NHẬN</b>\\n"
+            "Vui lòng liên hệ ADMIN để biết thêm thông tin."
+        )
+        await c.bot.send_message(uid, message)
+    except Exception:
+        logging.exception("Cannot notify customer for order %s", oid)
+    await c.message.edit_text(
+        f"{'✅ ĐÃ XÁC NHẬN' if approved else '❌ ĐÃ TỪ CHỐI'} ĐƠN #{oid}\\n"
+        f"Site: {escape(game)} · {escape(name)}\\nTài khoản: <code>{escape(account_name)}</code>\\n"
+        f"Giá: {money(price)} · Trạng thái: {new_status}")
+    await c.answer("Đã cập nhật đơn.")
+
+
+@dp.callback_query(F.data.startswith("orderapprove:"))
+async def cb_order_approve(c: CallbackQuery):
+    await admin_update_order(c, True)
+
+
+@dp.callback_query(F.data.startswith("orderreject:"))
+async def cb_order_reject(c: CallbackQuery):
+    await admin_update_order(c, False)
+
 
 @dp.message(Command("addservice"))
 async def add_service(m: Message):
