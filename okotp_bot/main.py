@@ -63,6 +63,8 @@ async def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             alias TEXT NOT NULL, game TEXT NOT NULL, account_ref TEXT NOT NULL,
             created_at TEXT NOT NULL, UNIQUE(user_id,alias))""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS bot_settings(
+            key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS source_codes(
             id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
             source_username TEXT NOT NULL, source_chat_id INTEGER NOT NULL,
@@ -286,6 +288,21 @@ async def save_captured_code(c: CallbackQuery):
     await c.answer("Đã lưu mã.")
 
 
+@dp.message(Command("setresultgroup"))
+async def set_result_group(m: Message):
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền thiết lập nhóm nhận kết quả.")
+        return
+    if m.chat.type not in ("group", "supergroup"):
+        await m.answer("Hãy thêm bot vào nhóm nhận kết quả, sau đó gửi /setresultgroup ngay trong nhóm.")
+        return
+    async with await db_connect() as db:
+        await db.execute(
+            "INSERT INTO bot_settings(key,value) VALUES('result_group_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(m.chat.id),))
+        await db.commit()
+    await m.answer("✅ Đã thiết lập nhóm nhận kết quả quét CODE này.")
+
 SOURCE_CHANNELS = {
     "hi88codemienphi88", "hi88tinmoi", "kenhquatanghi88",
     "hi88khogif", "hi88freecode2"
@@ -309,6 +326,16 @@ async def watch_hi88_sources(m: Message):
             await db.commit()
         except sqlite3.IntegrityError:
             return
+    async with await db_connect() as db:
+        group_row = await (await db.execute(
+            "SELECT value FROM bot_settings WHERE key='result_group_id'")).fetchone()
+    if group_row:
+        try:
+            await m.bot.send_message(
+                int(group_row[0]),
+                f"🎟 <b>KẾT QUẢ QUÉT CODE HI88</b>\\nMã mới: <code>{escape(code)}</code>\\nNguồn: @{escape(username)}\\n<a href=\"{link}\">Xem bài đăng gốc</a>\\nTrạng thái: <b>Đã phát hiện – chưa xác minh đổi thưởng</b>")
+        except Exception:
+            logging.exception("Could not post captured code to result group")
     for admin_id in ADMIN_IDS:
         try:
             await m.bot.send_message(admin_id,
