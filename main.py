@@ -139,45 +139,6 @@ async def buy(c: CallbackQuery):
     await c.message.answer("Vui lòng nhập tên tài khoản cần đặt. Nếu không yêu cầu tài khoản, nhập dấu -.")
     await c.answer()
 
-@dp.message()
-async def text_input(m: Message):
-    uid=m.from_user.id
-    if uid in pending:
-        task=pending.pop(uid)
-        if task=="deposit":
-            try: amount=int(re.sub(r"[^0-9]","",m.text or ""))
-            except ValueError: amount=0
-            if amount<1000: return await m.answer("Số tiền không hợp lệ. Nhấn NẠP TIỀN để thử lại.")
-            async with aiosqlite.connect(DB) as db:
-                cur=await db.execute("INSERT INTO deposits(user_id,amount) VALUES(?,?)",(uid,amount)); did=cur.lastrowid; await db.commit()
-            await m.answer(f"Đã tạo yêu cầu nạp #{did} — {amount:,}đ. Vui lòng chuyển khoản đúng nội dung theo hướng dẫn; Admin sẽ đối chiếu và duyệt.")
-            for aid in ADMINS:
-                try: await m.bot.send_message(aid,f"YÊU CẦU NẠP #{did}\nUser: {uid}\nSố tiền: {amount:,}đ\nDuyệt: /duyetnap {did} | Từ chối: /huy nap {did}")
-                except Exception: pass
-            return
-        if isinstance(task,dict) and "product_id" in task:
-            account=(m.text or "").strip()[:120]
-            if not account: return await m.answer("Tên tài khoản không được để trống.")
-            p=task
-            async with aiosqlite.connect(DB) as db:
-                await db.execute("BEGIN IMMEDIATE")
-                cur=await db.execute("SELECT balance FROM users WHERE id=?",(uid,)); row=await cur.fetchone()
-                bal=row[0] if row else 0
-                if bal < p["price"]:
-                    await db.rollback()
-                    return await m.answer(f"Số dư không đủ. Cần {p['price']:,}đ, hiện có {bal:,}đ, còn thiếu {p['price']-bal:,}đ.")
-                await db.execute("UPDATE users SET balance=balance-? WHERE id=?",(p["price"],uid))
-                cur=await db.execute("INSERT INTO orders(user_id,product_id,category,product_name,game,account,price,status) VALUES(?,?,?,?,?,?,?,'processing')",(uid,p["product_id"],p["category"],p["name"],p["game"],account,p["price"]))
-                oid=cur.lastrowid
-                await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(uid,f"create order {oid}"))
-                await db.commit()
-            await m.answer(f"✅ Đã tạo đơn #{oid}\nSản phẩm: {p['name']}\nTài khoản: {account}\nThanh toán: {p['price']:,}đ\nTrạng thái: Đang xử lý.")
-            for aid in ADMINS:
-                try: await m.bot.send_message(aid,f"ĐƠN #{oid}\nUser: {uid}\n{p['name']}\nTK: {account}\nGiá: {p['price']:,}đ")
-                except Exception: pass
-            return
-    await m.answer("Vui lòng chọn chức năng trong menu. Gõ /start để mở menu.")
-
 @dp.callback_query(F.data.startswith("a:"))
 async def admin_actions(c: CallbackQuery):
     if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
