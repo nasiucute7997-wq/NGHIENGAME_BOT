@@ -30,3 +30,28 @@ Gắn Railway Volume vào đường dẫn `/data` để giữ dữ liệu SQLite
 - Bot có quy trình tạo yêu cầu dịch vụ, nhập tên tài khoản và gửi ADMIN xác nhận.
 - Các đơn cần ADMIN duyệt mới được xử lý; tự động thực hiện dịch vụ cần API chính thức từ nhà cung cấp.
 - Chỉ lưu tên tài khoản; không yêu cầu người dùng gửi mật khẩu hoặc OTP.
+
+
+## Quản lý nút menu bằng quyền Admin
+
+Mở bot và gửi `/admin`. Admin có thể quản lý menu ngay trong Telegram:
+
+- `/buttonlist` — xem danh sách nút và ID.
+- `/buttonadd Tên nút|callback/url/message|Giá trị` — thêm nút.
+- `/buttonedit ID|Tên mới|callback/url/message|Giá trị mới` — sửa nút.
+- `/buttondel ID` — xóa nút.
+
+Loại `callback` dùng một mục có sẵn: `sites`, `cat:GAME`, `minigames`, `other_services`, `account`, `deposit`, `orders`, `guide`, `support`, `home`. Loại `url` mở liên kết HTTP/HTTPS. Loại `message` gửi nội dung văn bản do Admin nhập.
+
+Ví dụ:
+
+```
+/buttonadd 🌐 WEBSITE|url|https://example.com
+/buttonadd 📣 THÔNG BÁO|message|Nội dung thông báo
+```
+
+Menu mặc định được tạo tự động khi khởi động lần đầu. Với database cũ, bot tự thêm bảng menu mà không xóa dữ liệu người dùng, đơn hàng hoặc số dư. Hãy giữ nguyên Volume và `DB_PATH` hiện tại để không mất dữ liệu SQLite.
+
+## Chạy trên hosting
+
+Lệnh khởi động: `python main.py` (Procfile cũng khai báo worker). Cấu hình `BOT_TOKEN`, `ADMIN_IDS`, `DB_PATH` trong mục Environment Variables của hosting. Chỉ chạy một tiến trình polling cho mỗi BOT_TOKEN.
