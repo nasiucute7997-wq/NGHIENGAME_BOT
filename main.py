@@ -224,7 +224,7 @@ async def show_product_detail(message, pid):
 def admin_users_kb(rows):
     b = InlineKeyboardBuilder()
     for uid, name, balance, blocked in rows:
-        label = f"{'🚫' if blocked else '👤'} {name or 'Thành viên'} · ID {uid}"[:60]
+        label = f"{'🚫' if blocked else '👤'} {name or 'Thành viên'} · {balance:,}đ"[:60]
         b.button(text=label, callback_data=f"amu:{uid}")
     b.button(text="🔎 TÌM THÀNH VIÊN KHÁC", callback_data="am:users")
     b.button(text="⬅️ MENU QUẢN TRỊ", callback_data="a:refresh")
@@ -875,14 +875,59 @@ async def admin_balance_prompt(c: CallbackQuery):
     _,target,direction=c.data.split(":")
     if direction not in {"add","sub"}: return await c.answer("Thao tác không hợp lệ.",show_alert=True)
     pending[c.from_user.id]={"admin_balance_user_id":int(target),"direction":direction}
-    await c.message.answer(f"{'➕ CỘNG' if direction=='add' else '➖ TRỪ'} SỐ DƯ cho ID {target}\\nNhập số tiền VNĐ:",reply_markup=kb([("⬅️ HỦY","amcancel:"+target)]))
+    await c.message.answer(f"{'➕ CỘNG' if direction=='add' else '➖ TRỪ'} SỐ DƯ cho ID {target}\\nNhập số tiền VNĐ:",reply_markup=kb([("⬅️ HỦY","ambcancel")]))
     await c.answer()
 
-@dp.callback_query(F.data.startswith("amcancel:"))
+@dp.callback_query(F.data == "ambok")
+async def admin_balance_confirm(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    task = pending.get(c.from_user.id)
+    if not isinstance(task, dict) or not task.get("admin_balance_confirm"):
+        return await c.answer("Thao tác đã hết hạn. Vui lòng thực hiện lại.", show_alert=True)
+    target = int(task["admin_balance_user_id"])
+    amount = int(task["amount"])
+    direction = task["direction"]
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute("SELECT balance FROM users WHERE id=?", (target,))
+        row = await cur.fetchone()
+        if not row:
+            await db.rollback()
+            pending.pop(c.from_user.id, None)
+            return await c.answer("Không tìm thấy thành viên.", show_alert=True)
+        before = int(row[0])
+        if direction == "sub" and before < amount:
+            await db.rollback()
+            pending.pop(c.from_user.id, None)
+            return await c.answer(f"Số dư hiện tại chỉ {before:,}đ, không thể trừ {amount:,}đ.", show_alert=True)
+        delta = amount if direction == "add" else -amount
+        after = before + delta
+        await db.execute("UPDATE users SET balance=? WHERE id=?", (after, target))
+        await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)", (c.from_user.id, f"balance {direction} {amount} user {target}; {before}->{after}"))
+        await db.commit()
+    pending.pop(c.from_user.id, None)
+    await c.message.edit_text(
+        f"✅ ĐÃ CẬP NHẬT SỐ DƯ\\nID: {target}\\nThao tác: {'CỘNG' if direction == 'add' else 'TRỪ'} {amount:,}đ\\nSố dư trước: {before:,}đ\\nSố dư sau: {after:,}đ",
+        reply_markup=kb([("👤 XEM THÀNH VIÊN", f"amu:{target}"), ("➕➖ TIẾP TỤC ĐIỀU CHỈNH", "am:balance"), ("⬅️ MENU QUẢN TRỊ", "a:refresh")])
+    )
+    try:
+        await c.bot.send_message(target, f"💳 Số dư tài khoản đã được Admin {'cộng' if direction == 'add' else 'trừ'} {amount:,}đ.\\nSố dư hiện tại: {after:,}đ.")
+    except Exception:
+        pass
+    await c.answer("Đã cập nhật số dư.")
+
+@dp.callback_query(F.data == "ambcancel")
 async def admin_balance_cancel(c: CallbackQuery):
-    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
-    pending.pop(c.from_user.id,None)
-    await admin_user_detail(c)
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    task = pending.get(c.from_user.id)
+    target = int(task.get("admin_balance_user_id", 0)) if isinstance(task, dict) else 0
+    pending.pop(c.from_user.id, None)
+    if target:
+        await admin_user_detail(c)
+    else:
+        await c.message.edit_text("➕➖ ĐIỀU CHỈNH SỐ DƯ", reply_markup=kb([("🔎 TÌM THÀNH VIÊN", "am:balance"), ("⬅️ MENU QUẢN TRỊ", "a:refresh")]))
     await c.answer("Đã hủy thao tác.")
 
 @dp.callback_query(F.data.startswith("amlock:"))
@@ -1136,27 +1181,26 @@ async def process_admin_text(m: Message):
         pending.pop(uid,None)
         await m.answer(("🔎 KẾT QUẢ TÌM KIẾM\\n" if rows else "Không tìm thấy thành viên phù hợp."),reply_markup=admin_users_kb(rows) if rows else kb([("🔎 TÌM LẠI","am:users"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
         return True
-    if isinstance(task,dict) and "admin_balance_user_id" in task:
+    if isinstance(task,dict) and "admin_balance_user_id" in task and not task.get("admin_balance_confirm"):
         raw=re.sub(r"[^0-9]","",m.text or "")
         if not raw or int(raw)<=0:
             await m.answer("Số tiền không hợp lệ. Nhập số VNĐ lớn hơn 0.")
             return True
         target=int(task["admin_balance_user_id"]); amount=int(raw); direction=task["direction"]
         async with aiosqlite.connect(DB) as db:
-            cur=await db.execute("SELECT balance FROM users WHERE id=?",(target,)); row=await cur.fetchone()
-            if not row:
-                pending.pop(uid,None)
-                await m.answer("Không tìm thấy thành viên.")
-                return True
-            if direction=="sub" and row[0]<amount:
-                await m.answer(f"Số dư hiện tại chỉ {row[0]:,}đ, không thể trừ {amount:,}đ.")
-                return True
-            delta=amount if direction=="add" else -amount
-            await db.execute("UPDATE users SET balance=balance+? WHERE id=?",(delta,target))
-            await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(uid,f"balance {direction} {amount} user {target}"))
-            await db.commit()
-        pending.pop(uid,None)
-        await m.answer(f"Đã {'cộng' if direction=='add' else 'trừ'} {amount:,}đ cho ID {target}.",reply_markup=kb([("👤 XEM THÀNH VIÊN",f"amu:{target}"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+            cur=await db.execute("SELECT name,balance FROM users WHERE id=?",(target,)); row=await cur.fetchone()
+        if not row:
+            pending.pop(uid,None)
+            await m.answer("Không tìm thấy thành viên.")
+            return True
+        if direction=="sub" and row[1]<amount:
+            await m.answer(f"Số dư hiện tại chỉ {row[1]:,}đ, không thể trừ {amount:,}đ. Nhập lại số tiền.")
+            return True
+        pending[uid]={"admin_balance_confirm":True,"admin_balance_user_id":target,"direction":direction,"amount":amount}
+        await m.answer(
+            f"📋 XÁC NHẬN ĐIỀU CHỈNH SỐ DƯ\\nTên: {row[0] or 'Thành viên'}\\nTelegram ID: {target}\\nSố dư hiện tại: {row[1]:,}đ\\nThao tác: {'CỘNG' if direction=='add' else 'TRỪ'} {amount:,}đ\\nSố dư sau thao tác: {(row[1]+amount if direction=='add' else row[1]-amount):,}đ\\n\\nXác nhận thực hiện?",
+            reply_markup=kb([("✅ XÁC NHẬN", "ambok"), ("❌ HỦY", "ambcancel")])
+        )
         return True
     if isinstance(task,dict) and "admin_product_field" in task:
         value=(m.text or "").strip(); field=task["admin_product_field"]; pid=task["product_id"]
