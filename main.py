@@ -38,14 +38,17 @@ def kb(rows):
     b.adjust(1)
     return b.as_markup()
 
-def home_kb():
+def home_kb(is_admin=False):
     b = InlineKeyboardBuilder()
-    for label, data in [
+    items = [
         ("🎮 CODE GAME","m:code"),("🎯 MINIGAME LIVE","m:mini"),
         ("🔗 CODE SHARE","m:share"),("🛠 DỊCH VỤ KHÁC","m:services"),
         ("👤 TÀI KHOẢN","m:account"),("💳 NẠP TIỀN","m:deposit"),
         ("📋 LỊCH SỬ ĐƠN","m:orders"),("📞 LIÊN HỆ ADMIN","m:contact")
-    ]:
+    ]
+    if is_admin:
+        items.append(("🛡 TRUNG TÂM QUẢN TRỊ","m:admin"))
+    for label, data in items:
         b.button(text=label, callback_data=data)
     b.adjust(2)
     return b.as_markup()
@@ -106,7 +109,7 @@ async def page_products(message, category, game=""):
 @dp.message(CommandStart())
 async def start(m: Message):
     await ensure_user(m.from_user)
-    await m.answer(f"🏮🏮🏮🏮\n\n🔥 Xin chào, {m.from_user.full_name}!\n\n👥 Chào mừng đến NGHIỆN CODE.\nChọn dịch vụ bên dưới:",reply_markup=home_kb())
+    await m.answer(f"🏮🏮🏮🏮\n\n🔥 Xin chào, {m.from_user.full_name}!\n\n👥 Chào mừng đến NGHIỆN CODE.\nChọn dịch vụ bên dưới:",reply_markup=home_kb(m.from_user.id in ADMINS))
 
 @dp.message(Command("admin"))
 async def admin(m: Message):
@@ -116,7 +119,11 @@ async def admin(m: Message):
 @dp.callback_query(F.data.startswith("m:"))
 async def menus(c: CallbackQuery):
     key=c.data.split(":")[1]
-    if key=="home": return await c.message.edit_text("🏠 MENU CHÍNH",reply_markup=home_kb())
+    if key=="home": return await c.message.edit_text("🏠 MENU CHÍNH",reply_markup=home_kb(c.from_user.id in ADMINS))
+    if key=="admin":
+        if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+        await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
+        return await c.answer()
     if key=="code":
         await c.message.edit_text("Chọn game CODE GAME:",reply_markup=kb([(g,f"game:{g}") for g in GAMES]+[("⬅️ Menu","m:home")]))
     elif key=="share":
