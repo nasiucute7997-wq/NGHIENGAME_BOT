@@ -889,7 +889,18 @@ async def cb_buy(c: CallbackQuery):
     await c.answer()
 
 
-@dp.message(F.text)
+async def has_purchase_draft(m: Message) -> bool:
+    if not m.from_user or not m.text or m.text.startswith("/"):
+        return False
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT 1 FROM purchase_drafts d JOIN services s ON s.id=d.service_id "
+            "WHERE d.user_id=? AND s.active=1 LIMIT 1",
+            (m.from_user.id,))).fetchone()
+    return row is not None
+
+
+@dp.message(F.text, has_purchase_draft)
 async def receive_purchase_account(m: Message):
     if not m.from_user or not m.text or m.text.startswith("/"):
         return
