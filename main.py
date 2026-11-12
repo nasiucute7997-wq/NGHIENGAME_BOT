@@ -60,6 +60,10 @@ FOLDER_DEFS = [
     ("admin_notify", "📢 THÔNG BÁO THEO ID", "Thư mục quản trị"),
     ("admin_notifyall", "📣 THÔNG BÁO TẤT CẢ ID", "Thư mục quản trị"),
     ("admin_minitext", "✏️ NỘI DUNG MINIGAME", "Thư mục quản trị"),
+    *[(f"game_{g}", f"🎮 GAME {g}", "Danh mục game") for g in GAMES],
+    ("service_sms_receive", "📩 SMS NHẬN", "Danh mục dịch vụ"),
+    ("service_sms_send", "📤 SMS GỬI", "Danh mục dịch vụ"),
+    ("service_proxy", "🌐 PROXY / PRX", "Danh mục dịch vụ"),
 ]
 
 async def folder_is_on(key):
@@ -180,11 +184,11 @@ async def menus(c: CallbackQuery):
         if not await folder_is_on(folder_key):
             return await c.answer("Thư mục này hiện đang tắt.", show_alert=True)
     if key=="code":
-        await c.message.edit_text("Chọn game CODE GAME:",reply_markup=kb2([(g,f"game:{g}") for g in GAMES]+[("⬅️ Menu","m:home")]))
+        await c.message.edit_text("Chọn game CODE GAME:",reply_markup=kb2([(g,f"game:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]+[("⬅️ Menu","m:home")]))
     elif key=="share":
         await page_products(c.message,"SHARE")
     elif key=="services":
-        await c.message.edit_text("Chọn dịch vụ:",reply_markup=kb([("SMS NHẬN","cat:SMS"),("SMS GỬI","cat:SMS"),("PROXY / PRX","cat:PRX"),("⬅️ Menu","m:home")]))
+        await c.message.edit_text("Chọn dịch vụ:",reply_markup=kb([(label,data) for key,label,data in [("service_sms_receive","SMS NHẬN","cat:SMS"),("service_sms_send","SMS GỬI","cat:SMS"),("service_proxy","PROXY / PRX","cat:PRX")] if await folder_is_on(key)]+[("⬅️ Menu","m:home")]))
     elif key=="account":
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT balance FROM users WHERE id=?",(c.from_user.id,)); row=await cur.fetchone()
@@ -214,11 +218,19 @@ async def menus(c: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("game:"))
 async def game(c: CallbackQuery):
-    await page_products(c.message,"GAME",c.data.split(":")[1]); await c.answer()
+    selected=c.data.split(":")[1]
+    if not await folder_is_on(f"game_{selected}"):
+        return await c.answer("Danh mục game này hiện đang tắt.", show_alert=True)
+    await page_products(c.message,"GAME",selected); await c.answer()
 
 @dp.callback_query(F.data.startswith("cat:"))
 async def category(c: CallbackQuery):
-    await page_products(c.message,c.data.split(":")[1]); await c.answer()
+    cat=c.data.split(":")[1]
+    if cat=="SMS" and not (await folder_is_on("service_sms_receive") or await folder_is_on("service_sms_send")):
+        return await c.answer("Danh mục SMS hiện đang tắt.", show_alert=True)
+    if cat=="PRX" and not await folder_is_on("service_proxy"):
+        return await c.answer("Danh mục PROXY hiện đang tắt.", show_alert=True)
+    await page_products(c.message,cat); await c.answer()
 
 @dp.callback_query(F.data.startswith("buy:"))
 async def buy(c: CallbackQuery):
@@ -294,7 +306,7 @@ async def add_product_category(c: CallbackQuery):
     category=c.data.split(":",1)[1]
     if category not in {"GAME","MINIGAME LIVE","SHARE","SMS","PRX"}: return await c.answer("Danh mục không hợp lệ.",show_alert=True)
     if category=="GAME":
-        await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb2([(g,f"agw:{g}") for g in GAMES]+[("⬅️ Quay lại","a:add")]))
+        await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb2([(g,f"agw:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]+[("⬅️ Quay lại","a:add")]))
     else:
         pending[c.from_user.id]={"add_stage":"name","category":category,"game":""}
         await c.message.edit_text(f"Danh mục: {category}\nBƯỚC 2/4 — Nhập tên sản phẩm/dịch vụ:")
