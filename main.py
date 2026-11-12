@@ -145,21 +145,44 @@ async def admin_kb():
     for key, label, data in items:
         if await folder_is_on(key):
             b.button(text=label, callback_data=data)
-    b.button(text="⚙️ QUẢN LÝ THƯ MỤC / SỬA TÊN", callback_data="a:folders")
+    b.button(text="⚙️ QUẢN LÝ THƯ MỤC / CÀI ĐẶT", callback_data="a:folders")
     b.button(text="🔄 LÀM MỚI MENU", callback_data="a:refresh")
     b.button(text="⬅️ MENU CHÍNH", callback_data="m:home")
     b.adjust(2)
     return b.as_markup()
 
+CHILD_FOLDER_KEYS = {
+    "home_codegame": [f"game_{g}" for g in GAMES],
+    "home_mini": ["mini_XX8", "mini_AD88", "mini_U888", "mini_88CLB"],
+    "home_share": ["share_QQ88", "share_HI88"],
+}
+
 async def folders_kb():
     b = InlineKeyboardBuilder()
     for key, label, group in FOLDER_DEFS:
+        if key.startswith(("game_", "mini_", "share_")):
+            continue
+        enabled = await folder_is_on(key)
+        shown = await folder_label(key, label)
+        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | {shown}"[:64], callback_data=f"af:{key}")
+        config_callback = f"afchildren:{key}" if key in CHILD_FOLDER_KEYS else f"afe:{key}"
+        b.button(text=f"⚙️ CÀI ĐẶT | {shown}"[:64], callback_data=config_callback)
+    b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
+    b.button(text="⬅️ QUAY LẠI MENU ADMIN", callback_data="a:refresh")
+    b.adjust(2)
+    return b.as_markup()
+
+async def child_folders_kb(parent):
+    b = InlineKeyboardBuilder()
+    defs = {item[0]: item[1] for item in FOLDER_DEFS}
+    for key in CHILD_FOLDER_KEYS.get(parent, []):
+        label = defs.get(key, key)
         enabled = await folder_is_on(key)
         shown = await folder_label(key, label)
         b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | {shown}"[:64], callback_data=f"af:{key}")
         b.button(text=f"⚙️ CÀI ĐẶT | {shown}"[:64], callback_data=f"afe:{key}")
-    b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
-    b.button(text="⬅️ MENU ADMIN", callback_data="a:refresh")
+    b.button(text="🔄 TẢI LẠI", callback_data=f"afchildren:{parent}")
+    b.button(text="⬅️ QUAY LẠI THƯ MỤC CHÍNH", callback_data="a:folders")
     b.adjust(2)
     return b.as_markup()
 
@@ -470,9 +493,23 @@ async def folder_config_kb(key):
         b.button(text="💵 GIÁ", callback_data=f"cfgfield:price:{key}")
     else:
         b.button(text="✏️ ĐỔI TÊN HIỂN THỊ", callback_data=f"cfgsite:{key}")
-    b.button(text="⬅️ QUAY LẠI DANH SÁCH", callback_data="a:folders")
+    parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), None)
+    back_callback = f"afchildren:{parent}" if parent else "a:folders"
+    b.button(text="⬅️ QUAY LẠI THƯ MỤC", callback_data=back_callback)
     b.adjust(2)
     return b.as_markup()
+
+@dp.callback_query(F.data.startswith("afchildren:"))
+async def admin_child_folders(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    parent = c.data.split(":",1)[1]
+    if parent not in CHILD_FOLDER_KEYS:
+        return await c.answer("Thư mục chính không hợp lệ.", show_alert=True)
+    defs = {item[0]: item[1] for item in FOLDER_DEFS}
+    title = await folder_label(parent, defs.get(parent, parent))
+    await c.message.edit_text(f"⚙️ CÀI ĐẶT THƯ MỤC CON\\n{title}\\n\\nChọn từng SITE để bật/tắt hoặc cài đặt SITE GAME / NỘI DUNG / GIÁ:", reply_markup=await child_folders_kb(parent))
+    await c.answer()
 
 @dp.callback_query(F.data.startswith("afe:"))
 async def admin_edit_folder_name(c: CallbackQuery):
@@ -576,7 +613,13 @@ async def admin_toggle_folder(c: CallbackQuery):
     async with aiosqlite.connect(DB) as db:
         await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder:{key}", "0" if current else "1"))
         await db.commit()
-    await c.message.edit_text("⚙️ QUẢN LÝ THƯ MỤC\\nĐã cập nhật trạng thái. Mỗi thư mục có nút ON/OFF và SỬA TÊN riêng:", reply_markup=await folders_kb())
+    parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), None)
+    if parent:
+        defs = {item[0]: item[1] for item in FOLDER_DEFS}
+        title = await folder_label(parent, defs.get(parent, parent))
+        await c.message.edit_text(f"⚙️ CÀI ĐẶT THƯ MỤC CON\\n{title}\\n\\nĐã cập nhật trạng thái thư mục con:", reply_markup=await child_folders_kb(parent))
+    else:
+        await c.message.edit_text("⚙️ QUẢN LÝ THƯ MỤC\\nĐã cập nhật trạng thái:", reply_markup=await folders_kb())
     await c.answer("Đã đổi trạng thái.")
 
 @dp.callback_query(F.data.startswith("a:"))
@@ -587,7 +630,7 @@ async def admin_actions(c: CallbackQuery):
     if folder_key and not await folder_is_on(folder_key):
         return await c.answer("Thư mục quản trị này hiện đang tắt.", show_alert=True)
     if key=="folders":
-        await c.message.edit_text("⚙️ BẬT/TẮT THƯ MỤC\\nBấm ON/OFF để thay đổi trạng thái:", reply_markup=await folders_kb())
+        await c.message.edit_text("⚙️ QUẢN LÝ THƯ MỤC\\nChọn thư mục chính. Mở CÀI ĐẶT để quản lý từng thư mục con:", reply_markup=await folders_kb())
         return await c.answer()
     if key=="refresh":
         await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=await admin_kb())
