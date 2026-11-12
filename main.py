@@ -525,7 +525,7 @@ async def admin_user_toggle_block(c: CallbackQuery):
         await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(c.from_user.id,f"toggle block user {target}"))
         await db.commit()
     await c.answer("Đã cập nhật trạng thái thành viên.")
-    await admin_user_detail(c.message,target)
+    await admin_user_detail(c)
 
 @dp.callback_query(F.data.startswith("aord:"))
 async def admin_order_detail(c: CallbackQuery):
