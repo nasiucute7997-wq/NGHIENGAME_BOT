@@ -215,6 +215,11 @@ async def page_products(message, category, game=""):
 @dp.message(CommandStart())
 async def start(m: Message):
     await ensure_user(m.from_user)
+    if m.from_user.id not in ADMINS:
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT blocked FROM users WHERE id=?",(m.from_user.id,)); blocked=(await cur.fetchone())[0]
+        if blocked:
+            return await m.answer("🚫 Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Admin.")
     await m.answer(f"🏮🏮🏮🏮\n\n🔥 Xin chào, {m.from_user.full_name}!\n\n👥 Chào mừng đến NGHIỆN CODE.\nChọn dịch vụ bên dưới:",reply_markup=await home_kb(m.from_user.id in ADMINS))
 
 @dp.message(Command("admin"))
@@ -224,6 +229,11 @@ async def admin(m: Message):
 
 @dp.callback_query(F.data.startswith("m:"))
 async def menus(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT blocked FROM users WHERE id=?",(c.from_user.id,)); row=await cur.fetchone()
+        if row and row[0]:
+            return await c.answer("Tài khoản đang bị khóa. Vui lòng liên hệ Admin.",show_alert=True)
     key=c.data.split(":")[1]
     if key=="home": return await c.message.edit_text("🏠 MENU CHÍNH",reply_markup=await home_kb(c.from_user.id in ADMINS))
     if key=="admin":
@@ -285,6 +295,11 @@ async def category(c: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("buy:"))
 async def buy(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT blocked FROM users WHERE id=?",(c.from_user.id,)); row=await cur.fetchone()
+        if row and row[0]:
+            return await c.answer("Tài khoản đang bị khóa. Vui lòng liên hệ Admin.",show_alert=True)
     pid=int(c.data.split(":")[1])
     async with aiosqlite.connect(DB) as db:
         cur=await db.execute("SELECT category,game,name,price FROM products WHERE id=? AND active=1",(pid,)); p=await cur.fetchone()
