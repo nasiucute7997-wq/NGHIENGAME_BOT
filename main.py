@@ -334,7 +334,7 @@ async def add_product_category(c: CallbackQuery):
         await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb2([(g,f"agw:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]+[("⬅️ Quay lại","a:add")]))
     else:
         pending[c.from_user.id]={"add_stage":"name","category":category,"game":""}
-        await c.message.edit_text(f"Danh mục: {category}\nBƯỚC 2/4 — Nhập tên sản phẩm/dịch vụ:")
+        await c.message.edit_text(f"Danh mục: {category}\nBƯỚC 2/4 — Nhập tên sản phẩm/dịch vụ:",reply_markup=kb([("⬅️ QUAY LẠI CHỌN DANH MỤC","apback:category")]))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("agw:"))
@@ -343,9 +343,28 @@ async def add_product_game(c: CallbackQuery):
     game=c.data.split(":",1)[1]
     if game not in GAMES: return await c.answer("Game không hợp lệ.",show_alert=True)
     pending[c.from_user.id]={"add_stage":"name","category":"GAME","game":game}
-    await c.message.edit_text(f"Danh mục: GAME\nGame: {game}\nBƯỚC 3/4 — Nhập tên sản phẩm:")
+    await c.message.edit_text(f"Danh mục: GAME\nGame: {game}\nBƯỚC 3/4 — Nhập tên sản phẩm:",reply_markup=kb([("⬅️ QUAY LẠI CHỌN GAME","apback:game")]))
     await c.answer()
 
+@dp.callback_query(F.data.startswith("apback:"))
+async def admin_add_product_back(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    action=c.data.split(":",1)[1]; task=pending.get(c.from_user.id)
+    if action=="category":
+        pending.pop(c.from_user.id,None)
+        await c.message.edit_text("➕ THÊM SẢN PHẨM\\nBƯỚC 1/4 — Chọn danh mục:",reply_markup=kb([("🎮 GAME","apw:GAME"),("🎯 MINIGAME LIVE","apw:MINIGAME LIVE"),("🔗 SHARE","apw:SHARE"),("📩 SMS","apw:SMS"),("🌐 PRX","apw:PRX"),("⬅️ MENU ADMIN","a:refresh")]))
+    elif action=="game" and isinstance(task,dict):
+        await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb2([(g,f"agw:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]+[("⬅️ QUAY LẠI CHỌN DANH MỤC","apback:category")]))
+    elif action in {"name","description","price","confirm"} and isinstance(task,dict) and "add_stage" in task:
+        stage={"name":"name","description":"name","price":"description","confirm":"price"}[action]
+        task["add_stage"]=stage; pending[c.from_user.id]=task
+        labels={"name":"Nhập tên sản phẩm:","description":"Nhập mô tả/chi tiết sản phẩm (không có thì nhập dấu -):","price":"Nhập giá bán bằng số VNĐ:"}
+        await c.message.edit_text(f"Danh mục: {task.get(chr(99)+chr(97)+chr(116)+chr(101)+chr(103)+chr(111)+chr(114)+chr(121), chr(63))}\\n{labels[stage]}",reply_markup=kb([("⬅️ QUAY LẠI","apback:"+({"name":"game" if task.get("category")=="GAME" else "category","description":"name","price":"description"}[stage]))]))
+    elif action=="detail" and isinstance(task,dict) and "admin_product_field" in task:
+        pid=task["product_id"]; pending.pop(c.from_user.id,None); await show_product_detail(c.message,pid)
+    else:
+        return await c.answer("Không có bước trước để quay lại.",show_alert=True)
+    await c.answer()
 @dp.callback_query(F.data.startswith("apc:"))
 async def add_product_confirm(c: CallbackQuery):
     if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
@@ -358,7 +377,7 @@ async def add_product_confirm(c: CallbackQuery):
     elif action=="edit":
         task["add_stage"]="name"
         pending[c.from_user.id]=task
-        await c.message.edit_text("Nhập lại tên sản phẩm:")
+        await c.message.edit_text("Nhập lại tên sản phẩm:",reply_markup=kb([("⬅️ QUAY LẠI XÁC NHẬN","apback:confirm")]))
     elif action=="save":
         async with aiosqlite.connect(DB) as db:
             await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",(task["category"],task["game"],task["name"],task["price"],task["description"]))
@@ -445,7 +464,7 @@ async def admin_product_edit_field(c: CallbackQuery):
     if not row: return await c.answer("Không tìm thấy sản phẩm.",show_alert=True)
     current={"name":row[0],"description":row[1] or "Chưa có","price":f"{row[2]:,}đ"}[field]
     pending[c.from_user.id]={"admin_product_field":field,"product_id":pid}
-    await c.message.answer(f"✏️ SỬA {field.upper()} SẢN PHẨM #{pid}\\nHiện tại: {current}\\nNhập nội dung mới:")
+    await c.message.answer(f"✏️ SỬA {field.upper()} SẢN PHẨM #{pid}\\nHiện tại: {current}\\nNhập nội dung mới:",reply_markup=kb([("⬅️ QUAY LẠI CHI TIẾT SẢN PHẨM","apback:detail")]))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("apdel:"))
@@ -586,12 +605,12 @@ async def process_admin_text(m: Message):
             task["name"]=value[:120]
             task["add_stage"]="description"
             pending[uid]=task
-            await m.answer("BƯỚC TIẾP THEO — Nhập mô tả/chi tiết sản phẩm. Nếu không có, nhập dấu -.")
+            await m.answer("BƯỚC TIẾP THEO — Nhập mô tả/chi tiết sản phẩm. Nếu không có, nhập dấu -.",reply_markup=kb([("⬅️ QUAY LẠI SỬA TÊN","apback:name")]))
         elif stage=="description":
             task["description"]="" if value=="-" else value[:1500]
             task["add_stage"]="price"
             pending[uid]=task
-            await m.answer("BƯỚC CUỐI — Nhập giá bán bằng số VNĐ (ví dụ 50000).")
+            await m.answer("BƯỚC CUỐI — Nhập giá bán bằng số VNĐ (ví dụ 50000).",reply_markup=kb([("⬅️ QUAY LẠI SỬA MÔ TẢ","apback:description")]))
         else:
             digits=re.sub(r"[^0-9]","",value)
             if not digits or int(digits)<=0:
@@ -605,7 +624,7 @@ async def process_admin_text(m: Message):
                      f"Game/Dịch vụ: {task['game'] or 'Không áp dụng'}\nTên: {task['name']}\n"
                      f"Mô tả: {task['description'] or 'Chưa có'}\nGiá: {task['price']:,}đ\n\n"
                      "Chọn lưu hoặc sửa lại:")
-            await m.answer(preview,reply_markup=kb([("✅ LƯU SẢN PHẨM","apc:save"),("✏️ SỬA TÊN","apc:edit"),("❌ HỦY","apc:cancel")]))
+            await m.answer(preview,reply_markup=kb([("✅ LƯU SẢN PHẨM","apc:save"),("✏️ SỬA TÊN","apc:edit"),("⬅️ QUAY LẠI SỬA GIÁ","apback:price"),("❌ HỦY","apc:cancel")]))
         return True
     if not isinstance(task,str) and not (isinstance(task,dict) and ("notify_stage" in task or "admin_price_id" in task)): return False
     if isinstance(task,dict) and task.get("notify_stage")=="user_id":
