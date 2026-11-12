@@ -1,1090 +1,1284 @@
 import asyncio
-import html
 import logging
 import os
-from urllib.parse import quote
-from datetime import datetime
-from zoneinfo import ZoneInfo
+import sqlite3
+from datetime import datetime, timezone
+from html import escape
 
 import aiosqlite
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
-from aiogram.types import (
-    Message, CallbackQuery, BotCommand,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.types import Message, CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import BOT_TOKEN, ADMIN_IDS
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+ADMIN_IDS = {int(x.strip()) for x in os.getenv("ADMIN_IDS", "6369714149").split(",") if x.strip()}
+DB_PATH = os.getenv("DB_PATH", "bot.db")
+SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "").strip()
+if not BOT_TOKEN:
+    raise RuntimeError("Missing BOT_TOKEN environment variable.")
 
 logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
-DB_PATH = os.getenv("DB_PATH", "bot.db")
-TZ = ZoneInfo("Asia/Ho_Chi_Minh")
-MENU_LABELS = {"services":"🛍️ DỊCH VỤ","profile":"👤 CÁ NHÂN","other":"⚙️ DỊCH VỤ KHÁC","topup":"💳 NẠP TIỀN","referral":"🎁 GIỚI THIỆU","support":"☎️ CSKH","history":"📜 LỊCH SỬ","guide":"❔ HƯỚNG DẪN"}
-SUPPORT_URL = "https://t.me/benii2k"
-WELCOME_TEMPLATE = """🎉 <b>CHÀO MỪNG BẠN ĐẾN VỚI NGHIEN CODE BOT</b>
+BRANDS = ["XX8", "AD88", "U888", "ABC8", "MM88", "RR88", "XX88", "GG88"]
+SPECIAL = {"THU": "HI88", "FRI": "QQ88"}
 
-📅 Ngày: {date}
-🕒 Thời gian: {time}
+def now():
+    return datetime.now(timezone.utc).isoformat()
 
-👋 Xin chào, {name}!
+def money(value):
+    return f"{int(value):,}".replace(",", ".") + " VNĐ"
 
-🤖 Chào mừng bạn đến với hệ thống tiện ích của NGHIEN CODE.
+def is_admin(uid):
+    return uid in ADMIN_IDS
 
-━━━━━━━━━━━━━━
-🎁 <b>CODE GAME GIÁ RẺ - UY TÍN</b>
-🚀 <b>MINIGAME DONE NHANH</b>
-━━━━━━━━━━━━━━
-
-💙 Cảm ơn bạn đã sử dụng NGHIEN CODE BOT!"""
-HELP_TEMPLATE = """<b>HƯỚNG DẪN SỬ DỤNG</b>
-/start - Mở menu chính
-/help - Xem hướng dẫn
-/id - Xem Telegram ID
-/orders - Xem đơn hàng
-/admin - Khu vực quản trị"""
-ADMIN_WALLET_STATE = {}
-ADMIN_NOTIFY_TARGET = {}
-HOME_PHOTO_ID = None
-PAGE_TEXTS = {
-    'topup': '💳 <b>NẠP TIỀN</b>\n\nThông tin thanh toán chưa được ADMIN cấu hình.\nVui lòng liên hệ ADMIN để được hướng dẫn. Bot chưa tự động nhận hoặc xác minh thanh toán.',
-    'guide': '❔ <b>HƯỚNG DẪN SỬ DỤNG NGHIEN CODE BOT</b>\n\n1. Chọn DỊCH VỤ và chọn sản phẩm bạn cần.\n\n2. <b>CHỌN SẢN PHẨM CẦN ĐẶT</b>\n   Điền tên tài khoản cần mua.\n   Ví dụ:\n   <code>Acbzxv.......\nAbcxyz.......\nTenTaiKhoan.......</code>\n   (Mỗi tên tài khoản một dòng)\n\n3. <b>XÁC NHẬN MUA HÀNG.</b>\n\n4. Chọn LỊCH SỬ để theo dõi trạng thái đơn hàng.',
-    'referral': '🎁 <b>GIỚI THIỆU BẠN BÈ</b>\n\nChia sẻ bot với bạn bè để cùng sử dụng dịch vụ.',
-    'other': '⚙️ <b>DỊCH VỤ KHÁC</b>\n\n📞 Liên hệ ADMIN: @benii2k\n🆘 Cần hỗ trợ, hãy nhắn trực tiếp ADMIN.'
-}
-
-SERVICES = {
-    "new88": ("NEW88", 10000, "Dịch vụ NEW88"),
-    "xx88": ("XX88 CODE TO", 25000, "Dịch vụ XX88 CODE TO"),
-    "hi88": ("HI88", 15000, "Dịch vụ HI88"),
-    "qq88": ("QQ88", 15000, "Dịch vụ QQ88"),
-    "mb66": ("MB66", 10000, "Dịch vụ MB66"),
-    "llwin": ("LLWIN", 5000, "Dịch vụ LLWIN"),
-    "shbet": ("SHBET", 10000, "Dịch vụ SHBET"),
-    "8kbet": ("8KBET", 5000, "Dịch vụ 8KBET"),
-    "ad88_mini": ("MINIGAME AD88 - COMBO 200 ĐIỂM", 55000, "Minigame AD88, combo 200 điểm"),
-    "xx8_mini": ("MINIGAME XX8 - COMBO 200 ĐIỂM", 55000, "Minigame XX8, combo 200 điểm"),
-    "mm88_mini": ("MINIGAME MM88", 35000, "Minigame MM88"),
-}
-
-
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-
-def money(amount: int) -> str:
-    return f"{amount:,}".replace(",", ".") + "đ"
-
-
-async def get_balance(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT balance FROM wallets WHERE user_id=?",
-            (user_id,)
-        )
-        row = await cur.fetchone()
-    return int(row[0]) if row else 0
-
-
-def main_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text=MENU_LABELS["services"], callback_data="menu:services"),
-            InlineKeyboardButton(text=MENU_LABELS["profile"], callback_data="menu:profile"),
-        ],
-        [
-            InlineKeyboardButton(text=MENU_LABELS["referral"], callback_data="menu:referral"),
-            InlineKeyboardButton(text=MENU_LABELS["support"], url=SUPPORT_URL),
-        ],
-        [
-            InlineKeyboardButton(text=MENU_LABELS["guide"], callback_data="menu:guide"),
-        ],
-    ])
-
-
-def back_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
-    ])
-
-
-def service_keyboard() -> InlineKeyboardMarkup:
-    rows = []
-    pair = []
-    for key, (name, price, _) in SERVICES.items():
-        pair.append(InlineKeyboardButton(
-            text=f"{name} · {money(price)}",
-            callback_data=f"service:{key}"
-        ))
-        if len(pair) == 2:
-            rows.append(pair)
-            pair = []
-    if pair:
-        rows.append(pair)
-    rows.append([InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
+async def db_connect():
+    return await aiosqlite.connect(DB_PATH)
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                full_name TEXT NOT NULL,
-                username TEXT,
-                joined_at TEXT NOT NULL
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                service_key TEXT NOT NULL,
-                service_name TEXT NOT NULL,
-                price INTEGER NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-        await db.execute("""CREATE TABLE IF NOT EXISTS referrals (
-            user_id INTEGER PRIMARY KEY,
-            referrer_id INTEGER NOT NULL,
-            created_at TEXT NOT NULL
-        )""")
-        await db.execute("CREATE TABLE IF NOT EXISTS wallets (user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0)")
-        await db.execute("""CREATE TABLE IF NOT EXISTS wallet_transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
-            amount INTEGER NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL
-        )""")
-        await db.execute("CREATE TABLE IF NOT EXISTS bot_settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
-        await db.execute("CREATE TABLE IF NOT EXISTS service_catalog (service_key TEXT PRIMARY KEY, service_name TEXT NOT NULL, price INTEGER NOT NULL, description TEXT NOT NULL)")
-        for key, (name, price, desc) in SERVICES.items():
-            await db.execute("INSERT OR IGNORE INTO service_catalog VALUES (?, ?, ?, ?)", (key, name, price, desc))
-        await db.commit()
-    await load_bot_settings()
-
-
-async def load_bot_settings():
-    global SUPPORT_URL, WELCOME_TEMPLATE, HELP_TEMPLATE, HOME_PHOTO_ID
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT setting_key, setting_value FROM bot_settings")
-        settings = dict(await cur.fetchall())
-        cur = await db.execute("SELECT service_key, service_name, price, description FROM service_catalog")
-        service_rows = await cur.fetchall()
-    SUPPORT_URL = settings.get("support_url", SUPPORT_URL)
-    WELCOME_TEMPLATE = settings.get("welcome_text", WELCOME_TEMPLATE)
-    HELP_TEMPLATE = settings.get("help_text", HELP_TEMPLATE)
-    HOME_PHOTO_ID = settings.get("home_photo_id") or None
-    for key in PAGE_TEXTS:
-        PAGE_TEXTS[key] = settings.get("page_" + key, PAGE_TEXTS[key])
-    for key in MENU_LABELS:
-        MENU_LABELS[key] = settings.get("menu_" + key, MENU_LABELS[key])
-    if service_rows:
-        SERVICES.clear()
-        for key, name, price, desc in service_rows:
-            SERVICES[key] = (name, price, desc)
-
-
-async def save_setting(key, value):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT INTO bot_settings VALUES (?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
+    async with await db_connect() as db:
+        await db.execute("""CREATE TABLE IF NOT EXISTS users(
+            user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT,
+            balance INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS services(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            price INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1)""")
+        columns = await (await db.execute("PRAGMA table_info(services)")).fetchall()
+        service_columns = {row[1] for row in columns}
+        if "category" not in service_columns:
+            await db.execute("ALTER TABLE services ADD COLUMN category TEXT NOT NULL DEFAULT 'OTHER'")
+        if "game" not in service_columns:
+            await db.execute("ALTER TABLE services ADD COLUMN game TEXT NOT NULL DEFAULT ''")
+        await db.execute("""CREATE TABLE IF NOT EXISTS orders(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            service_id INTEGER NOT NULL, service_name TEXT NOT NULL,
+            price INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL)""")
+        order_columns = await (await db.execute("PRAGMA table_info(orders)")).fetchall()
+        order_column_names = {row[1] for row in order_columns}
+        if "game" not in order_column_names:
+            await db.execute("ALTER TABLE orders ADD COLUMN game TEXT NOT NULL DEFAULT ''")
+        if "account_name" not in order_column_names:
+            await db.execute("ALTER TABLE orders ADD COLUMN account_name TEXT NOT NULL DEFAULT ''")
+        await db.execute("""CREATE TABLE IF NOT EXISTS purchase_drafts(
+            user_id INTEGER PRIMARY KEY, service_id INTEGER NOT NULL,
+            game TEXT NOT NULL, account_name TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS deposits(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS saved_accounts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            alias TEXT NOT NULL, game TEXT NOT NULL, account_ref TEXT NOT NULL,
+            created_at TEXT NOT NULL, UNIQUE(user_id,alias))""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS bot_settings(
+            key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS source_codes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
+            source_username TEXT NOT NULL, source_chat_id INTEGER NOT NULL,
+            source_message_id INTEGER NOT NULL, message_link TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS captured_codes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            account_id INTEGER NOT NULL, game TEXT NOT NULL, code TEXT NOT NULL,
+            source_chat_id INTEGER, source_message_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'saved', created_at TEXT NOT NULL,
+            UNIQUE(user_id,code))""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS minigame_rooms(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT NOT NULL,
+            title TEXT NOT NULL, starts_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open', result TEXT DEFAULT '',
+            created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS minigame_entries(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+            UNIQUE(room_id,user_id))""")
         await db.commit()
 
-
-async def save_user(user):
-    if not user:
-        return
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO users(user_id, full_name, username, joined_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                full_name=excluded.full_name,
-                username=excluded.username
-        """, (
-            user.id, user.full_name, user.username,
-            datetime.now(TZ).isoformat(timespec="seconds")
-        ))
+async def ensure_user(user):
+    async with await db_connect() as db:
+        await db.execute("""INSERT INTO users(user_id,username,full_name,created_at)
+            VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+            username=excluded.username, full_name=excluded.full_name""",
+            (user.id, user.username or "", user.full_name or "", now()))
         await db.commit()
 
+async def get_balance(uid):
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT balance FROM users WHERE user_id=?", (uid,))).fetchone()
+        return int(row[0]) if row else 0
 
-async def send_home(message: Message):
-    now = datetime.now(TZ)
-    first_name = html.escape(message.from_user.first_name or "Bạn")
-    text = WELCOME_TEMPLATE.format(name=first_name, date=f"{now:%d/%m/%Y}", time=f"{now:%H:%M}")
-    if HOME_PHOTO_ID:
-        await message.answer_photo(HOME_PHOTO_ID, caption=text, reply_markup=main_menu())
+GAME_SITES = ["HI88", "NEW88", "XX8", "AD88", "U888", "ABC8", "MM88", "F168", "ON68", "GK88", "78WIN", "SHBET"]
+
+def home_kb(uid):
+    kb = InlineKeyboardBuilder()
+    for label, data in [
+        ("🎮  CHỌN SITE GAME", "sites"),
+        ("🛒  MUA DỊCH VỤ GAME", "cat:GAME"),
+        ("🏆  MINIGAME LIVE", "minigames"),
+        ("🧩  DỊCH VỤ KHÁC", "other_services"),
+        ("👤  TÀI KHOẢN CỦA TÔI", "account"),
+        ("💳  NẠP TIỀN", "deposit"),
+        ("📦  LỊCH SỬ ĐƠN HÀNG", "orders"),
+        ("📖  HƯỚNG DẪN SỬ DỤNG", "guide"),
+        ("☎️  LIÊN HỆ HỖ TRỢ", "support"),
+    ]:
+        kb.button(text=label, callback_data=data)
+    if is_admin(uid):
+        kb.button(text="🛠  TRANG QUẢN TRỊ", callback_data="admin")
+    kb.adjust(1, 2, 2, 2, 1, 1)
+    return kb.as_markup()
+
+def sites_kb():
+    kb = InlineKeyboardBuilder()
+    for site in GAME_SITES:
+        kb.button(text=f"🎮 {site}", callback_data=f"site:{site}")
+    kb.button(text="⬅️ MENU CHÍNH", callback_data="home")
+    kb.adjust(2)
+    return kb.as_markup()
+
+async def site_detail_text(uid, site):
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,alias,account_ref FROM saved_accounts WHERE user_id=? AND upper(game)=? ORDER BY id DESC",
+            (uid, site))).fetchall()
+    lines = [f"🎮 <b>QUẢN LÝ SITE {escape(site)}</b>", "",
+             "Tài khoản đăng nhập được quản lý riêng theo từng site.",
+             "Chỉ lưu tên đăng nhập/tên tài khoản; không gửi mật khẩu hoặc OTP.", ""]
+    if rows:
+        lines.append("👤 <b>TÀI KHOẢN ĐÃ LƯU</b>")
+        for aid, alias, account_ref in rows:
+            lines.append(f"• {escape(alias)} — <code>{escape(account_ref)}</code>")
     else:
-        await message.answer(text, reply_markup=main_menu())
+        lines.append("Bạn chưa thêm tài khoản cho site này.")
+    return "\\n".join(lines)
 
+def site_detail_kb(site):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ THÊM TÀI KHOẢN", callback_data=f"siteadd:{site}")
+    kb.button(text="🔄 LÀM MỚI DANH SÁCH", callback_data=f"site:{site}")
+    kb.button(text="⬅️ DANH SÁCH SITE", callback_data="sites")
+    kb.button(text="🏠 MENU CHÍNH", callback_data="home")
+    kb.adjust(1)
+    return kb.as_markup()
 
-@dp.message(CommandStart())
-async def start_handler(message: Message):
-    user = message.from_user
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT 1 FROM users WHERE user_id=?", (user.id,))
-        is_new_user = await cur.fetchone() is None
+def back_kb(target="home"):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⬅️ Quay lại", callback_data=target)
+    return kb.as_markup()
 
-    await save_user(user)
+async def service_keyboard(category, game=None):
+    async with await db_connect() as db:
+        if category == "GAME" and game:
+            rows = await (await db.execute(
+                "SELECT id,name,price FROM services WHERE active=1 AND category=? AND (upper(game)=? OR game='') ORDER BY id",
+                (category, game))).fetchall()
+        else:
+            rows = await (await db.execute(
+                "SELECT id,name,price FROM services WHERE active=1 AND category=? ORDER BY id",
+                (category,))).fetchall()
+    kb = InlineKeyboardBuilder()
+    for sid, name, price in rows:
+        callback = f"buy:{sid}:{game}" if category == "GAME" and game else f"buy:{sid}"
+        button_label = f"🛒 MUA HÀNG · {name} · {money(price)}" if category == "GAME" else f"{name} · {money(price)}"
+        kb.button(text=button_label, callback_data=callback)
+    kb.button(text="⬅️ Menu chính", callback_data="home")
+    kb.adjust(1)
+    return kb.as_markup(), rows
 
-    # Chỉ ghi nhận giới thiệu khi người dùng mới mở bot lần đầu qua link ref_ID.
-    parts = (message.text or "").split(maxsplit=1)
-    if is_new_user and len(parts) == 2 and parts[1].startswith("ref_"):
-        try:
-            referrer_id = int(parts[1][4:])
-        except ValueError:
-            referrer_id = 0
-        if referrer_id and referrer_id != user.id:
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "INSERT OR IGNORE INTO referrals(user_id, referrer_id, created_at) VALUES (?, ?, ?)",
-                    (user.id, referrer_id, datetime.now(TZ).isoformat(timespec="seconds"))
-                )
-                await db.commit()
-
-    await send_home(message)
-
-
-@dp.message(Command("help"))
-async def help_handler(message: Message):
-    await message.answer(HELP_TEMPLATE)
-
-
-@dp.message(Command("id"))
-async def id_handler(message: Message):
-    await message.answer(f"Telegram ID của bạn: <code>{message.from_user.id}</code>")
-
-
-@dp.message(Command("orders"))
-async def orders_handler(message: Message):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT id, service_name, price, status, created_at FROM orders "
-            "WHERE user_id=? ORDER BY id DESC LIMIT 10",
-            (message.from_user.id,)
-        )
-        rows = await cursor.fetchall()
+async def send_orders(uid, send):
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,service_name,price,status,game,account_name,created_at FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 20",
+            (uid,))).fetchall()
     if not rows:
-        await message.answer("Bạn chưa có đơn hàng nào.", reply_markup=back_menu())
+        await send("Bạn chưa có đơn hàng nào.")
         return
-    labels = {"pending": "⏳ Đang chờ ADMIN", "accepted": "✅ Đã xác nhận", "rejected": "❌ Đã từ chối"}
-    lines = ["<b>📦 ĐƠN HÀNG CỦA BẠN</b>"]
-    for oid, name, price, status, created in rows:
+    lines = ["📦 <b>LỊCH SỬ ĐƠN HÀNG</b>"]
+    for oid, name, price, status, game, account_name, created_at in rows:
         lines.append(
-            f"\n<b>#{oid} · {html.escape(name)}</b>\n"
-            f"Giá: {money(price)}\n"
-            f"Trạng thái: {labels.get(status, status)}\n"
-            f"Thời gian: {html.escape(created)}"
+            f"\n<b>#{oid} · {escape(name)}</b>\n"
+            f"Game: <b>{escape(game or 'Không áp dụng')}</b>\n"
+            f"Tài khoản: <code>{escape(account_name or '—')}</code>\n"
+            f"Giá: {money(price)} · Trạng thái: <b>{escape(status)}</b>\n"
+            f"Thời gian: {escape(created_at)}"
         )
-    await message.answer("\n".join(lines), reply_markup=back_menu())
+    await send("\n".join(lines))
 
 
-@dp.message(Command("admin"))
-async def admin_handler(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Bạn không có quyền truy cập.")
+def code_menu_kb(accounts, code):
+    kb = InlineKeyboardBuilder()
+    for aid, alias, game, account_ref in accounts:
+        kb.button(text=f"{alias} · {game}", callback_data=f"codeacct:{aid}:{code}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+@dp.message(Command("addaccount"))
+async def add_saved_account(m: Message):
+    await ensure_user(m.from_user)
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
+    if len(parts) != 3 or not all(parts):
+        await m.answer("Cú pháp: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\nVí dụ: <code>/addaccount Acc chính|XX8|user123</code>\nKhông nhập mật khẩu hoặc mã OTP.")
         return
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT COUNT(*) FROM users")
-        users = (await cur.fetchone())[0]
-        cur = await db.execute("SELECT COUNT(*) FROM orders WHERE status='pending'")
-        pending = (await cur.fetchone())[0]
-        cur = await db.execute("SELECT COUNT(*) FROM orders")
-        total = (await cur.fetchone())[0]
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 QUẢN LÝ SỐ DƯ", callback_data="admin:wallet")],
-        [InlineKeyboardButton(text="🛍️ QUẢN LÝ DỊCH VỤ", callback_data="admin:services")],
-        [InlineKeyboardButton(text="🔘 CHỈNH NÚT MENU", callback_data="admin:buttons")],
-        [InlineKeyboardButton(text="🖼️ CHỈNH ẢNH BOT", callback_data="admin:images")],
-        [InlineKeyboardButton(text="📝 CHỈNH VĂN BẢN", callback_data="admin:commands")],
-        [InlineKeyboardButton(text="📨 GỬI THÔNG BÁO USER", callback_data="admin:notify")],
-        [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")],
-        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
-    ])
-    await message.answer(
-        "🔐 <b>BẢNG ĐIỀU KHIỂN ADMIN</b>\n\n"
-        f"👥 Người dùng: {users}\n"
-        f"📦 Tổng đơn: {total}\n"
-        f"⏳ Đơn đang chờ: {pending}",
-        reply_markup=kb
-    )
-
-
-@dp.callback_query(F.data == "menu:home")
-async def menu_home(call: CallbackQuery):
-    await call.answer()
-    now = datetime.now(TZ)
-    name = html.escape(call.from_user.first_name or "Bạn")
-    text = WELCOME_TEMPLATE.format(name=name, date=f"{now:%d/%m/%Y}", time=f"{now:%H:%M}")
-    try:
-        await call.message.delete()
-    except Exception:
-        pass
-    if HOME_PHOTO_ID:
-        await call.bot.send_photo(call.message.chat.id, HOME_PHOTO_ID, caption=text, reply_markup=main_menu())
-    else:
-        await call.bot.send_message(call.message.chat.id, text, reply_markup=main_menu())
-
-
-@dp.callback_query(F.data == "menu:services")
-async def menu_services(call: CallbackQuery):
-    await call.answer()
-    await call.message.edit_text(
-        "🛍️ <b>DANH SÁCH DỊCH VỤ</b>\n\n"
-        "🎮 <b>DỊCH VỤ CODE</b>\n"
-        + "\n".join(
-            f"• {html.escape(name)} — {money(price)}"
-            for key, (name, price, _) in list(SERVICES.items())[:8]
-        )
-        + "\n\n🎯 <b>DỊCH VỤ MINIGAME</b>\n"
-        + "\n".join(
-            f"• {html.escape(name)} — {money(price)}"
-            for key, (name, price, _) in list(SERVICES.items())[8:]
-        )
-        + "\n\nChọn dịch vụ bên dưới để xem chi tiết và tạo đơn.",
-        reply_markup=service_keyboard()
-    )
-
-
-@dp.callback_query(F.data.startswith("service:"))
-async def service_detail(call: CallbackQuery):
-    key = call.data.split(":", 1)[1]
-    if key not in SERVICES:
-        await call.answer("Dịch vụ không tồn tại.", show_alert=True)
+    alias, game, account_ref = parts
+    if len(alias) > 40 or len(game) > 30 or len(account_ref) > 80:
+        await m.answer("Thông tin quá dài. Vui lòng rút gọn.")
         return
-    name, price, description = SERVICES[key]
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 ĐẶT DỊCH VỤ", callback_data=f"order:{key}")],
-        [InlineKeyboardButton(text="🔙 DANH SÁCH DỊCH VỤ", callback_data="menu:services")],
-        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
-    ])
-    await call.answer()
-    await call.message.edit_text(
-        f"📌 <b>{html.escape(name)}</b>\n\n"
-        f"📝 {html.escape(description)}\n"
-        f"💰 Giá: <b>{money(price)}</b>\n\n"
-        "Bấm ĐẶT DỊCH VỤ để gửi yêu cầu đến ADMIN. "
-        "Đơn chỉ được thực hiện sau khi ADMIN xác nhận.",
-        reply_markup=kb
-    )
-
-
-@dp.callback_query(F.data.startswith("order:"))
-async def create_order(call: CallbackQuery, bot: Bot):
-    key = call.data.split(":", 1)[1]
-    if key not in SERVICES:
-        await call.answer("Dịch vụ không tồn tại.", show_alert=True)
-        return
-    name, price, _ = SERVICES[key]
-    now = datetime.now(TZ).isoformat(timespec="seconds")
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "INSERT INTO orders(user_id, service_key, service_name, price, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-            (call.from_user.id, key, name, price, now, now)
-        )
-        order_id = cur.lastrowid
-        await db.commit()
-
-    user_label = html.escape(call.from_user.full_name)
-    username = f"@{html.escape(call.from_user.username)}" if call.from_user.username else "Không có"
-    admin_text = (
-        "🆕 <b>YÊU CẦU ĐẶT DỊCH VỤ</b>\n\n"
-        f"🧾 Mã đơn: <code>#{order_id}</code>\n"
-        f"📦 Dịch vụ: <b>{html.escape(name)}</b>\n"
-        f"💰 Giá: <b>{money(price)}</b>\n"
-        f"👤 Khách: {user_label}\n"
-        f"🔗 Username: {username}\n"
-        f"🆔 Telegram ID: <code>{call.from_user.id}</code>\n"
-        f"🕒 Thời gian: {html.escape(now)}"
-    )
-    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ XÁC NHẬN", callback_data=f"orderstatus:accepted:{order_id}"),
-            InlineKeyboardButton(text="❌ TỪ CHỐI", callback_data=f"orderstatus:rejected:{order_id}")
-        ]
-    ])
-    delivered = False
-    for admin_id in ADMIN_IDS:
+    async with await db_connect() as db:
         try:
-            await bot.send_message(admin_id, admin_text, reply_markup=admin_kb)
-            delivered = True
-        except Exception:
-            logging.exception("Cannot notify admin %s", admin_id)
-
-    await call.answer("Đã tạo yêu cầu đặt dịch vụ.")
-    await call.message.edit_text(
-        f"✅ <b>ĐÃ GỬI YÊU CẦU ĐẶT DỊCH VỤ</b>\n\n"
-        f"🧾 Mã đơn: <code>#{order_id}</code>\n"
-        f"📦 Dịch vụ: {html.escape(name)}\n"
-        f"💰 Giá: {money(price)}\n"
-        "⏳ Trạng thái: Đang chờ ADMIN xác nhận.\n\n"
-        + ("ADMIN đã được thông báo." if delivered else "Chưa gửi được thông báo đến ADMIN. Vui lòng liên hệ hỗ trợ.")
-        + "\n\nDùng /orders để xem trạng thái đơn.",
-        reply_markup=back_menu()
+            await db.execute("INSERT INTO saved_accounts(user_id,alias,game,account_ref,created_at) VALUES(?,?,?,?,?)",
+                             (m.from_user.id, alias, game.upper(), account_ref, now()))
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await m.answer("Tên gợi nhớ này đã tồn tại. Hãy chọn tên khác.")
+            return
+    await m.answer(
+        f"✅ <b>ĐÃ THÊM TÀI KHOẢN</b>\\nSite: <b>{escape(game.upper())}</b>\\n"
+        f"Tên gợi nhớ: <b>{escape(alias)}</b>\\nTên đăng nhập: <code>{escape(account_ref)}</code>\\n\\n"
+        "Bạn có thể quay lại SITE GAME để xem danh sách tài khoản."
     )
 
+@dp.message(Command("accounts"))
+async def list_saved_accounts(m: Message):
+    await ensure_user(m.from_user)
+    async with await db_connect() as db:
+        rows = await (await db.execute("SELECT id,alias,game,account_ref FROM saved_accounts WHERE user_id=? ORDER BY id DESC",
+                                       (m.from_user.id,))).fetchall()
+    if not rows:
+        await m.answer("Bạn chưa lưu tài khoản. Dùng /addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập")
+        return
+    lines = ["👤 <b>TÀI KHOẢN ĐÃ LƯU</b>"]
+    for aid, alias, game, ref in rows:
+        lines.append(f"#{aid} · {escape(alias)} · {escape(game)} · <code>{escape(ref)}</code>")
+    await m.answer("\n".join(lines))
 
-@dp.callback_query(F.data.startswith("orderstatus:"))
-async def update_order_status(call: CallbackQuery, bot: Bot):
-    if not is_admin(call.from_user.id):
-        await call.answer("Bạn không có quyền thực hiện.", show_alert=True)
+def extract_code(text):
+    import re
+    if not text:
+        return None
+    # Chỉ nhận chuỗi được gắn nhãn CODE/MÃ/GIFT/VOUCHER để hạn chế quét nhầm.
+    patterns = [
+        r"(?i)(?:CODE|MÃ\s*CODE|GIFT\s*CODE|VOUCHER)\s*[:：=\-]?\s*([A-Z0-9][A-Z0-9-]{5,31})",
+        r"(?i)(?:MÃ|CODE)\s*[:：]\s*([A-Z0-9][A-Z0-9-]{5,31})"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).upper()
+    return None
+
+@dp.message(Command("scan"))
+async def scan_telegram_message(m: Message):
+    await ensure_user(m.from_user)
+    source = m.reply_to_message
+    if not source:
+        await m.answer("Hãy trả lời (Reply) tin nhắn Telegram có mã rồi gửi /scan.")
         return
-    _, status, order_id_text = call.data.split(":")
-    if status not in ("accepted", "rejected"):
-        await call.answer("Trạng thái không hợp lệ.", show_alert=True)
+    body = source.text or source.caption or ""
+    code = extract_code(body)
+    if not code:
+        await m.answer("❌ Không tìm thấy mã theo định dạng có nhãn CODE/MÃ/GIFT/VOUCHER. Bạn có thể gửi lại tin nhắn kèm cú pháp CODE: ABC123.")
         return
-    order_id = int(order_id_text)
-    now = datetime.now(TZ).isoformat(timespec="seconds")
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT user_id, service_name, status FROM orders WHERE id=?", (order_id,)
-        )
-        row = await cur.fetchone()
-        if not row:
-            await call.answer("Không tìm thấy đơn hàng.", show_alert=True)
+    async with await db_connect() as db:
+        exists = await (await db.execute("SELECT id FROM captured_codes WHERE user_id=? AND code=?",
+                                         (m.from_user.id, code))).fetchone()
+        if exists:
+            await m.answer(f"⚠️ Mã <code>{escape(code)}</code> đã được lưu trước đó (#{exists[0]}).")
             return
-        user_id, service_name, old_status = row
-        if old_status != "pending":
-            await call.answer("Đơn này đã được xử lý trước đó.", show_alert=True)
+        accounts = await (await db.execute("SELECT id,alias,game,account_ref FROM saved_accounts WHERE user_id=? ORDER BY id",
+                                           (m.from_user.id,))).fetchall()
+    if not accounts:
+        await m.answer("Bạn chưa có tài khoản lưu sẵn. Tạo bằng /addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập rồi quét lại.")
+        return
+    await m.answer(f"🔎 Phát hiện mã: <code>{escape(code)}</code>\nChọn tài khoản muốn gắn mã:", reply_markup=code_menu_kb(accounts, code))
+
+@dp.callback_query(F.data.startswith("codeacct:"))
+async def choose_code_account(c: CallbackQuery):
+    if not c.message:
+        await c.answer()
+        return
+    try:
+        _, aid_text, code = c.data.split(":", 2)
+        aid = int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        account = await (await db.execute("SELECT alias,game,account_ref FROM saved_accounts WHERE id=? AND user_id=?",
+                                          (aid,c.from_user.id))).fetchone()
+    if not account:
+        await c.answer("Không tìm thấy tài khoản của bạn.", show_alert=True)
+        return
+    alias, game, account_ref = account
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Xác nhận lưu mã", callback_data=f"codesave:{aid}:{code}")
+    kb.button(text="❌ Hủy", callback_data="home")
+    kb.adjust(1)
+    await c.message.edit_text(
+        f"🔐 <b>XÁC NHẬN GẮN MÃ</b>\nMã: <code>{escape(code)}</code>\nGame: <b>{escape(game)}</b>\nTài khoản: <b>{escape(alias)}</b> (<code>{escape(account_ref)}</code>)\n\nBot chỉ lưu mã vào danh sách của tài khoản; chưa tự đăng nhập hoặc đổi thưởng.",
+        reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("codesave:"))
+async def save_captured_code(c: CallbackQuery):
+    try:
+        _, aid_text, code = c.data.split(":", 2)
+        aid = int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        account = await (await db.execute("SELECT game FROM saved_accounts WHERE id=? AND user_id=?",
+                                          (aid,c.from_user.id))).fetchone()
+        if not account:
+            await c.answer("Tài khoản không hợp lệ.", show_alert=True)
+            return
+        try:
+            cur = await db.execute(
+                "INSERT INTO captured_codes(user_id,account_id,game,code,source_chat_id,source_message_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                (c.from_user.id,aid,account[0],code,None,None,now()))
+            code_id = cur.lastrowid
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await c.answer("Mã này đã được lưu rồi.", show_alert=True)
+            return
+    await c.message.edit_text(f"✅ Đã lưu mã #{code_id} vào tài khoản.\nGame: <b>{escape(account[0])}</b>\nMã: <code>{escape(code)}</code>\nTrạng thái: <b>Đã lưu – chờ bạn tự đổi thưởng</b>.")
+    await c.answer("Đã lưu mã.")
+
+
+@dp.message(Command("setresultgroup"))
+async def set_result_group(m: Message):
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền thiết lập nhóm nhận kết quả.")
+        return
+    if m.chat.type not in ("group", "supergroup"):
+        await m.answer("Hãy thêm bot vào nhóm nhận kết quả, sau đó gửi /setresultgroup ngay trong nhóm.")
+        return
+    async with await db_connect() as db:
+        await db.execute(
+            "INSERT INTO bot_settings(key,value) VALUES('result_group_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(m.chat.id),))
+        await db.commit()
+    await m.answer("✅ Đã thiết lập nhóm nhận kết quả quét CODE này.")
+
+@dp.message(F.chat.type.in_({"group", "supergroup"}))
+async def auto_set_result_group(m: Message):
+    # Tự chọn nhóm kết quả khi Admin gửi tin nhắn đầu tiên trong nhóm.
+    if not m.from_user or not is_admin(m.from_user.id):
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT value FROM bot_settings WHERE key='result_group_id'")).fetchone()
+        if row:
             return
         await db.execute(
-            "UPDATE orders SET status=?, updated_at=? WHERE id=? AND status='pending'",
-            (status, now, order_id)
-        )
+            "INSERT INTO bot_settings(key,value) VALUES('result_group_id',?) ON CONFLICT(key) DO NOTHING",
+            (str(m.chat.id),))
+        await db.commit()
+    await m.answer("✅ Nhóm này đã tự động được thiết lập để nhận kết quả quét CODE HI88. Bạn không cần gửi lệnh.")
+
+SOURCE_CHANNELS = {
+    "hi88codemienphi88", "hi88tinmoi", "kenhquatanghi88",
+    "hi88khogif", "hi88freecode2"
+}
+
+@dp.channel_post()
+async def watch_hi88_sources(m: Message):
+    username = (m.chat.username or "").lower()
+    if username not in SOURCE_CHANNELS:
+        return
+    body = m.text or m.caption or ""
+    code = extract_code(body)
+    if not code:
+        return
+    link = f"https://t.me/{username}/{m.message_id}"
+    async with await db_connect() as db:
+        try:
+            await db.execute(
+                "INSERT INTO source_codes(code,source_username,source_chat_id,source_message_id,message_link,created_at) VALUES(?,?,?,?,?,?)",
+                (code, username, m.chat.id, m.message_id, link, now()))
+            await db.commit()
+        except sqlite3.IntegrityError:
+            return
+    async with await db_connect() as db:
+        group_row = await (await db.execute(
+            "SELECT value FROM bot_settings WHERE key='result_group_id'")).fetchone()
+    if group_row:
+        try:
+            await m.bot.send_message(
+                int(group_row[0]),
+                f"🎟 <b>KẾT QUẢ QUÉT CODE HI88</b>\\nMã mới: <code>{escape(code)}</code>\\nNguồn: @{escape(username)}\\n<a href=\"{link}\">Xem bài đăng gốc</a>\\nTrạng thái: <b>Đã phát hiện – chưa xác minh đổi thưởng</b>")
+        except Exception:
+            logging.exception("Could not post captured code to result group")
+    for admin_id in ADMIN_IDS:
+        try:
+            await m.bot.send_message(admin_id,
+                f"🎯 <b>PHÁT HIỆN CODE HI88 MỚI</b>\\nNguồn: @{escape(username)}\\nMã: <code>{escape(code)}</code>\\n<a href=\"{link}\">Mở bài đăng gốc</a>\\nDùng /sourcecodes để xem kho mã.")
+        except Exception:
+            logging.exception("Could not notify admin about captured source code")
+
+@dp.message(Command("sourcecodes"))
+async def list_source_codes(m: Message):
+    await ensure_user(m.from_user)
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,code,source_username,message_link,created_at FROM source_codes ORDER BY id DESC LIMIT 20")).fetchall()
+    if not rows:
+        await m.answer("Chưa phát hiện mã mới. Kiểm tra bot đã được thêm vào các kênh nguồn chưa.")
+        return
+    lines = ["🎟 <b>KHO CODE HI88 TỰ QUÉT</b>"]
+    kb = InlineKeyboardBuilder()
+    for cid, code, source, link, created in rows:
+        lines.append(f"#{cid} · <code>{escape(code)}</code> · @{escape(source)}")
+        kb.button(text=f"#{cid} · {code}", callback_data=f"srcpick:{cid}")
+    kb.adjust(1)
+    await m.answer("\\n".join(lines), reply_markup=kb.as_markup())
+
+@dp.callback_query(F.data.startswith("srcpick:"))
+async def pick_source_code(c: CallbackQuery):
+    try:
+        code_id = int(c.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await c.answer("Mã không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT code,source_username,message_link FROM source_codes WHERE id=?", (code_id,))).fetchone()
+        accounts = await (await db.execute("SELECT id,alias,game,account_ref FROM saved_accounts WHERE user_id=? ORDER BY id", (c.from_user.id,))).fetchall()
+    if not row:
+        await c.answer("Không tìm thấy mã.", show_alert=True)
+        return
+    if not accounts:
+        await c.answer("Bạn cần lưu tài khoản trước bằng /addaccount.", show_alert=True)
+        return
+    code, source, link = row
+    kb = InlineKeyboardBuilder()
+    for aid, alias, game, account_ref in accounts:
+        kb.button(text=f"{alias} · {game}", callback_data=f"srcacct:{code_id}:{aid}")
+    kb.adjust(1)
+    await c.message.answer(
+        f"🔎 Mã: <code>{escape(code)}</code>\\nNguồn: @{escape(source)}\\nChọn tài khoản để gắn mã.",
+        reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("srcacct:"))
+async def confirm_source_code(c: CallbackQuery):
+    try:
+        _, code_id_text, aid_text = c.data.split(":")
+        code_id, aid = int(code_id_text), int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        code_row = await (await db.execute("SELECT code,source_username,source_chat_id,source_message_id FROM source_codes WHERE id=?", (code_id,))).fetchone()
+        account = await (await db.execute("SELECT alias,game,account_ref FROM saved_accounts WHERE id=? AND user_id=?", (aid,c.from_user.id))).fetchone()
+    if not code_row or not account:
+        await c.answer("Không tìm thấy mã hoặc tài khoản.", show_alert=True)
+        return
+    code, source, chat_id, msg_id = code_row
+    alias, game, account_ref = account
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Xác nhận lưu mã", callback_data=f"srcsave:{code_id}:{aid}")
+    kb.button(text="❌ Hủy", callback_data="home")
+    kb.adjust(1)
+    await c.message.answer(
+        f"🔐 <b>XÁC NHẬN LƯU CODE</b>\\nMã: <code>{escape(code)}</code>\\nNguồn: @{escape(source)}\\nGame: <b>{escape(game)}</b>\\nTài khoản: <b>{escape(alias)}</b> (<code>{escape(account_ref)}</code>)",
+        reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("srcsave:"))
+async def save_source_code(c: CallbackQuery):
+    try:
+        _, code_id_text, aid_text = c.data.split(":")
+        code_id, aid = int(code_id_text), int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT code,source_chat_id,source_message_id FROM source_codes WHERE id=?", (code_id,))).fetchone()
+        account = await (await db.execute("SELECT game FROM saved_accounts WHERE id=? AND user_id=?", (aid,c.from_user.id))).fetchone()
+        if not row or not account:
+            await c.answer("Không tìm thấy mã hoặc tài khoản.", show_alert=True)
+            return
+        code, chat_id, msg_id = row
+        try:
+            await db.execute(
+                "INSERT INTO captured_codes(user_id,account_id,game,code,source_chat_id,source_message_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                (c.from_user.id,aid,account[0],code,chat_id,msg_id,now()))
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await c.answer("Mã này đã được lưu vào tài khoản trước đó.", show_alert=True)
+            return
+    await c.message.edit_text(f"✅ Đã lưu mã <code>{escape(code)}</code> vào tài khoản.\\nGame: <b>{escape(account[0])}</b>\\nTrạng thái: Đã lưu, chờ bạn tự đổi thưởng.")
+    await c.answer("Đã lưu mã.")
+
+@dp.message(Command("mycodes"))
+async def list_my_codes(m: Message):
+    await ensure_user(m.from_user)
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT c.id,c.game,c.code,a.alias,c.status FROM captured_codes c JOIN saved_accounts a ON a.id=c.account_id WHERE c.user_id=? ORDER BY c.id DESC LIMIT 30",
+            (m.from_user.id,))).fetchall()
+    if not rows:
+        await m.answer("Chưa có mã nào được lưu.")
+        return
+    lines = ["🎟 <b>MÃ CODE ĐÃ LƯU</b>"]
+    for cid, game, code, alias, status in rows:
+        lines.append(f"#{cid} · {escape(game)} · {escape(alias)} · <code>{escape(code)}</code> · {escape(status)}")
+    await m.answer("\n".join(lines))
+
+@dp.message(CommandStart())
+async def start(m: Message):
+    await ensure_user(m.from_user)
+    name = escape(m.from_user.full_name or "Bạn")
+    welcome = (
+        "━━━━━━━━━━━━━━━━━━\\n"
+        "🎉 <b>NGHIỆN CODE BOT</b>\\n"
+        "━━━━━━━━━━━━━━━━━━\\n\\n"
+        f"Xin chào <b>{name}</b>! 👋\\n"
+        "Hệ thống quản lý SITE GAME và dịch vụ.\\n\\n"
+        "🎮 Chọn site để quản lý tài khoản riêng.\\n"
+        "💳 Theo dõi số dư và giao dịch.\\n"
+        "📦 Quản lý đơn hàng, dịch vụ.\\n\\n"
+        "👇 <b>VUI LÒNG CHỌN CHỨC NĂNG</b>"
+    )
+    await m.answer(welcome, reply_markup=home_kb(m.from_user.id))
+
+@dp.message(Command("menu"))
+async def menu(m: Message):
+    await ensure_user(m.from_user)
+    await m.answer("🏠 <b>MENU CHÍNH</b>", reply_markup=home_kb(m.from_user.id))
+
+@dp.message(Command("balance"))
+async def balance_cmd(m: Message):
+    await ensure_user(m.from_user)
+    await m.answer(f"💰 Số dư: <b>{money(await get_balance(m.from_user.id))}</b>")
+
+@dp.message(Command("services"))
+async def services_cmd(m: Message):
+    kb, rows = await service_keyboard("OTHER")
+    await m.answer("🧩 <b>DỊCH VỤ KHÁC</b>" if rows else "Chưa có sản phẩm. Vui lòng quay lại sau.", reply_markup=kb)
+
+@dp.message(Command("orders"))
+async def orders_cmd(m: Message):
+    await ensure_user(m.from_user)
+    await send_orders(m.from_user.id, m.answer)
+
+@dp.message(Command("nap"))
+async def deposit_request(m: Message):
+    await ensure_user(m.from_user)
+    parts = (m.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await m.answer("Cú pháp: <code>/nap 50000</code>")
+        return
+    amount = int(parts[1])
+    if not 10000 <= amount <= 100000000:
+        await m.answer("Số tiền phải từ 10.000 đến 100.000.000 VNĐ.")
+        return
+    async with await db_connect() as db:
+        cur = await db.execute("INSERT INTO deposits(user_id,amount,created_at) VALUES(?,?,?)",
+                               (m.from_user.id, amount, now()))
+        dep_id = cur.lastrowid
+        await db.commit()
+    await m.answer(f"✅ Đã tạo yêu cầu nạp #{dep_id}: <b>{money(amount)}</b>. Chờ Admin xác nhận.")
+    for aid in ADMIN_IDS:
+        try:
+            await m.bot.send_message(aid, f"💳 Yêu cầu nạp #{dep_id}\nUser: <code>{m.from_user.id}</code>\nSố tiền: <b>{money(amount)}</b>\nDuyệt: <code>/duyetnap {dep_id}</code> · Từ chối: <code>/huy nap {dep_id}</code>")
+        except Exception:
+            logging.exception("Cannot notify admin")
+
+@dp.callback_query(F.data == "home")
+async def cb_home(c: CallbackQuery):
+    await c.message.edit_text("━━━━━━━━━━━━━━━━━━\\n🏠 <b>MENU CHÍNH</b>\\n━━━━━━━━━━━━━━━━━━\\n\\nChọn chức năng bạn muốn sử dụng.", reply_markup=home_kb(c.from_user.id))
+    await c.answer()
+
+@dp.callback_query(F.data == "sites")
+async def cb_sites(c: CallbackQuery):
+    await c.message.edit_text(
+        "🎮 <b>DANH SÁCH SITE GAME</b>\\n\\n"
+        "Chọn website bạn đang sử dụng. Mỗi site có danh sách tài khoản riêng.",
+        reply_markup=sites_kb())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("site:"))
+async def cb_site_detail(c: CallbackQuery):
+    site = c.data.split(":", 1)[1].upper()
+    if site not in GAME_SITES:
+        await c.answer("Site không hợp lệ.", show_alert=True)
+        return
+    await c.message.edit_text(
+        await site_detail_text(c.from_user.id, site),
+        reply_markup=site_detail_kb(site))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("siteadd:"))
+async def cb_site_add(c: CallbackQuery):
+    site = c.data.split(":", 1)[1].upper()
+    if site not in GAME_SITES:
+        await c.answer("Site không hợp lệ.", show_alert=True)
+        return
+    await c.message.edit_text(
+        f"➕ <b>THÊM TÀI KHOẢN {escape(site)}</b>\\n\\n"
+        "Gửi theo cú pháp sau để lưu tài khoản:\\n"
+        f"<code>/addaccount Tên_gợi_nhớ|{escape(site)}|Tên_đăng_nhập</code>\\n\\n"
+        "Ví dụ: <code>/addaccount Acc chính|{escape(site)}|user123</code>\\n"
+        "⚠️ Không nhập mật khẩu, OTP hoặc thông tin thanh toán.",
+        reply_markup=back_kb(f"site:{site}"))
+    await c.answer()
+
+@dp.callback_query(F.data == "cat:GAME")
+async def cb_game(c: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    for site in GAME_SITES:
+        kb.button(text=f"🎮 {site}", callback_data=f"gamebuy:{site}")
+    kb.button(text="⬅️ Menu chính", callback_data="home")
+    kb.adjust(2)
+    await c.message.edit_text("🎮 <b>CHỌN GAME CẦN MUA</b>\n\nChọn đúng site để xem dịch vụ tương ứng.", reply_markup=kb.as_markup())
+    await c.answer()
+
+
+@dp.callback_query(F.data.startswith("gamebuy:"))
+async def cb_game_services(c: CallbackQuery):
+    game = c.data.split(":", 1)[1].upper()
+    if game not in GAME_SITES:
+        await c.answer("Game không hợp lệ.", show_alert=True)
+        return
+    kb, rows = await service_keyboard("GAME", game)
+    if not rows:
+        await c.message.edit_text(
+            f"🎮 <b>{escape(game)}</b>\nHiện chưa có dịch vụ được cấu hình cho game này.",
+            reply_markup=back_kb("cat:GAME"))
+    else:
+        await c.message.edit_text(
+            f"🎮 <b>SITE GAME: {escape(game)}</b>\n\nChọn nút <b>🛒 MUA HÀNG</b> tại sản phẩm cần đặt.\nSau đó nhập tên tài khoản và xác nhận mua.",
+            reply_markup=kb)
+    await c.answer()
+
+@dp.callback_query(F.data == "other_services")
+async def cb_other(c: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📩 SMS – dịch vụ gửi/nhận hợp pháp", callback_data="cat:SMS")
+    kb.button(text="🌐 PRX – Proxy", callback_data="cat:PRX")
+    kb.button(text="⬅️ Menu chính", callback_data="home")
+    kb.adjust(1)
+    await c.message.edit_text("🧩 <b>DỊCH VỤ KHÁC</b>\nChọn nhóm dịch vụ.", reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("cat:"))
+async def cb_category(c: CallbackQuery):
+    category = c.data.split(":", 1)[1]
+    if category not in {"SMS", "PRX"}:
+        await c.answer("Danh mục không hợp lệ.", show_alert=True)
+        return
+    kb, rows = await service_keyboard(category)
+    title = "📩 SMS" if category == "SMS" else "🌐 PRX – PROXY"
+    await c.message.edit_text(f"<b>{title}</b>\nChọn sản phẩm." if rows else f"<b>{title}</b>\nHiện chưa có sản phẩm.", reply_markup=kb)
+    await c.answer()
+
+@dp.callback_query(F.data == "minigames")
+async def cb_minigames(c: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    for brand in BRANDS:
+        kb.button(text=f"🎯 MINIGAME {brand}", callback_data=f"mg:{brand}")
+    kb.button(text="⭐ MINIGAME HI88 · THỨ 5", callback_data="mg:HI88")
+    kb.button(text="⭐ MINIGAME QQ88 · THỨ 6", callback_data="mg:QQ88")
+    kb.button(text="📋 Phòng đang mở", callback_data="rooms")
+    kb.button(text="⬅️ Menu chính", callback_data="home")
+    kb.adjust(2, 2, 2, 2, 1, 1, 1)
+    await c.message.edit_text("🏆 <b>MINIGAME LIVE</b>\n\n<b>Danh sách thường:</b> XX8 · AD88 · U888 · ABC8 · MM88 · RR88 · XX88 · GG88\n\n<b>Đặc biệt:</b> Thứ 5 – HI88 | Thứ 6 – QQ88", reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("mg:"))
+async def cb_brand(c: CallbackQuery):
+    brand = c.data.split(":", 1)[1]
+    async with await db_connect() as db:
+        rooms = await (await db.execute(
+            "SELECT id,title,starts_at,status FROM minigame_rooms WHERE brand=? ORDER BY id DESC LIMIT 10",
+            (brand,))).fetchall()
+    kb = InlineKeyboardBuilder()
+    for rid, title, starts, status in rooms:
+        kb.button(text=f"#{rid} · {title} · {status}", callback_data=f"room:{rid}")
+    kb.button(text="⬅️ Danh sách Minigame", callback_data="minigames")
+    kb.adjust(1)
+    lines = [f"🎯 <b>MINIGAME {escape(brand)}</b>"]
+    if brand == "HI88":
+        lines.append("Lịch đặc biệt: Thứ 5")
+    if brand == "QQ88":
+        lines.append("Lịch đặc biệt: Thứ 6")
+    lines.append("Chưa có phòng được Admin tạo." if not rooms else "Chọn phòng để xem chi tiết.")
+    await c.message.edit_text("\n".join(lines), reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data == "rooms")
+async def cb_rooms(c: CallbackQuery):
+    async with await db_connect() as db:
+        rooms = await (await db.execute(
+            "SELECT id,brand,title,starts_at,status FROM minigame_rooms WHERE status IN ('open','full') ORDER BY starts_at LIMIT 20")).fetchall()
+    kb = InlineKeyboardBuilder()
+    for rid, brand, title, starts, status in rooms:
+        kb.button(text=f"{brand} · #{rid} · {title}", callback_data=f"room:{rid}")
+    kb.button(text="⬅️ Minigame", callback_data="minigames")
+    kb.adjust(1)
+    await c.message.edit_text("📋 <b>PHÒNG ĐANG MỞ</b>" if rooms else "Hiện chưa có phòng đang mở.", reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("room:"))
+async def cb_room(c: CallbackQuery):
+    try:
+        rid = int(c.data.split(":", 1)[1])
+    except ValueError:
+        await c.answer("Phòng không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        room = await (await db.execute(
+            "SELECT brand,title,starts_at,status,result FROM minigame_rooms WHERE id=?", (rid,))).fetchone()
+        count = await (await db.execute("SELECT COUNT(*) FROM minigame_entries WHERE room_id=?", (rid,))).fetchone()
+    if not room:
+        await c.answer("Không tìm thấy phòng.", show_alert=True)
+        return
+    brand, title, starts, status, result = room
+    kb = InlineKeyboardBuilder()
+    if status == "open":
+        kb.button(text="📝 Đăng ký tham gia", callback_data=f"join:{rid}")
+    kb.button(text="⬅️ Danh sách Minigame", callback_data=f"mg:{brand}")
+    kb.adjust(1)
+    body = f"🎯 <b>{escape(brand)} – {escape(title)}</b>\nThời gian: {escape(starts)}\nTrạng thái: <b>{escape(status)}</b>\nSố người đăng ký: <b>{count[0]}</b>"
+    if result:
+        body += f"\n\n🏁 <b>KẾT QUẢ</b>\n{escape(result)}"
+    await c.message.edit_text(body, reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("join:"))
+async def cb_join(c: CallbackQuery):
+    try:
+        rid = int(c.data.split(":", 1)[1])
+    except ValueError:
+        await c.answer("Mã phòng không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        room = await (await db.execute("SELECT status FROM minigame_rooms WHERE id=?", (rid,))).fetchone()
+        if not room or room[0] != "open":
+            await c.answer("Phòng đã đóng đăng ký hoặc không tồn tại.", show_alert=True)
+            return
+        try:
+            await db.execute("INSERT INTO minigame_entries(room_id,user_id,created_at) VALUES(?,?,?)",
+                             (rid, c.from_user.id, now()))
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await c.answer("Bạn đã đăng ký phòng này rồi.", show_alert=True)
+            return
+    await c.answer("Đăng ký thành công!", show_alert=True)
+    await c.message.edit_text("✅ Bạn đã đăng ký tham gia phòng. Hãy theo dõi trạng thái và kết quả tại phòng này.", reply_markup=back_kb("rooms"))
+
+@dp.callback_query(F.data == "account")
+async def cb_account(c: CallbackQuery):
+    await ensure_user(c.from_user)
+    username = "@" + c.from_user.username if c.from_user.username else "Chưa đặt"
+    await c.message.edit_text(
+        f"👤 <b>THÔNG TIN TÀI KHOẢN</b>\n\nID: <code>{c.from_user.id}</code>\nTên: {escape(c.from_user.full_name)}\nUsername: {escape(username)}\nSố dư: <b>{money(await get_balance(c.from_user.id))}</b>",
+        reply_markup=back_kb())
+    await c.answer()
+
+@dp.callback_query(F.data == "deposit")
+async def cb_deposit(c: CallbackQuery):
+    await c.message.edit_text("💳 <b>NẠP TIỀN</b>\nGửi lệnh <code>/nap 50000</code> để tạo yêu cầu. Admin xác nhận thủ công.", reply_markup=back_kb())
+    await c.answer()
+
+@dp.callback_query(F.data == "orders")
+async def cb_orders(c: CallbackQuery):
+    await c.answer()
+    await send_orders(c.from_user.id, c.message.answer)
+
+@dp.callback_query(F.data == "codes_help")
+async def cb_codes_help(c: CallbackQuery):
+    await c.message.edit_text("🎟 <b>QUÉT MÃ TỪ TELEGRAM</b>\n1. Lưu tài khoản: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\n2. Reply tin nhắn Telegram có mã rồi gửi <code>/scan</code>.\n3. Chọn tài khoản và xác nhận lưu.\n4. Xem mã bằng <code>/mycodes</code>.\n\nBot chỉ lưu mã và gắn vào tài khoản bạn chọn; không tự đăng nhập hoặc tự đổi thưởng.", reply_markup=back_kb())
+    await c.answer()
+
+@dp.callback_query(F.data == "sourcecodes")
+async def cb_source_codes(c: CallbackQuery):
+    await c.answer()
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,code,source_username FROM source_codes ORDER BY id DESC LIMIT 20")).fetchall()
+    if not rows:
+        await c.message.answer("Chưa phát hiện mã mới. Hãy thêm bot vào các kênh nguồn để bắt đầu quét.")
+        return
+    lines = ["🎟 <b>KHO CODE HI88 TỰ QUÉT</b>"]
+    kb = InlineKeyboardBuilder()
+    for cid, code, source in rows:
+        lines.append(f"#{cid} · <code>{escape(code)}</code> · @{escape(source)}")
+        kb.button(text=f"#{cid} · {code}", callback_data=f"srcpick:{cid}")
+    kb.adjust(1)
+    await c.message.answer("\\n".join(lines), reply_markup=kb.as_markup())
+
+@dp.callback_query(F.data == "mycodes")
+async def cb_my_codes(c: CallbackQuery):
+    await c.answer()
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT c.id,c.game,c.code,a.alias,c.status FROM captured_codes c JOIN saved_accounts a ON a.id=c.account_id WHERE c.user_id=? ORDER BY c.id DESC LIMIT 20",
+            (c.from_user.id,))).fetchall()
+    if not rows:
+        await c.message.answer("Chưa có mã nào được lưu. Dùng /mycodes để xem hướng dẫn.")
+        return
+    lines=["🎟 <b>MÃ CODE ĐÃ LƯU</b>"]
+    for cid,game,code,alias,status in rows:
+        lines.append(f"#{cid} · {escape(game)} · {escape(alias)} · <code>{escape(code)}</code> · {escape(status)}")
+    await c.message.answer("\n".join(lines))
+
+@dp.callback_query(F.data == "guide")
+async def cb_guide(c: CallbackQuery):
+    await c.message.edit_text("📖 <b>HƯỚNG DẪN</b>\n1. Chọn danh mục.\n2. Chọn sản phẩm/phòng Minigame.\n3. Xác nhận yêu cầu.\n4. Theo dõi trạng thái tại Lịch sử đơn hoặc phòng Minigame.\n\nDịch vụ SMS chỉ dùng cho hệ thống bạn sở hữu/được ủy quyền. Proxy phải có nguồn cung hợp pháp.", reply_markup=back_kb())
+    await c.answer()
+
+@dp.callback_query(F.data == "support")
+async def cb_support(c: CallbackQuery):
+    contact = "@" + SUPPORT_USERNAME.lstrip("@") if SUPPORT_USERNAME else "Vui lòng liên hệ Admin."
+    await c.message.edit_text(f"☎️ <b>LIÊN HỆ HỖ TRỢ</b>\n{escape(contact)}", reply_markup=back_kb())
+    await c.answer()
+
+@dp.callback_query(F.data == "admin")
+async def cb_admin(c: CallbackQuery):
+    if not is_admin(c.from_user.id):
+        await c.answer("Không có quyền truy cập.", show_alert=True)
+        return
+    await c.message.edit_text(
+        "🛠 <b>ADMIN PANEL – LỆNH QUẢN LÝ</b>\n\n"
+        "<b>Sản phẩm:</b>\n/addservice GAME|SITE|Tên dịch vụ|Giá\n/addservice SMS|Tên dịch vụ|Giá\n/addservice PRX|Tên proxy|Giá\n/delservice ID\n\n"
+        "<b>Minigame:</b>\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\n/roomstatus ID|open hoặc closed\n/result ID|Nội dung kết quả\n/roomsadmin\n\n"
+        "<b>Tài khoản & nạp:</b>\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats",
+        reply_markup=back_kb())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("buy:"))
+async def cb_buy(c: CallbackQuery):
+    await ensure_user(c.from_user)
+    try:
+        parts = c.data.split(":")
+        sid = int(parts[1])
+        selected_game = parts[2].upper() if len(parts) > 2 else ""
+    except (ValueError, IndexError):
+        await c.answer("Mã sản phẩm không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        service = await (await db.execute(
+            "SELECT name,price,category,game FROM services WHERE id=? AND active=1", (sid,))).fetchone()
+        if not service:
+            await c.answer("Sản phẩm không còn hoạt động.", show_alert=True)
+            return
+        name, price, category, game = service
+        if category == "GAME":
+            game = game or selected_game
+            if game not in GAME_SITES:
+                await c.answer("Vui lòng chọn lại game.", show_alert=True)
+                return
+        await db.execute(
+            "INSERT INTO purchase_drafts(user_id,service_id,game,account_name,created_at) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET service_id=excluded.service_id,game=excluded.game,account_name='',created_at=excluded.created_at",
+            (c.from_user.id, sid, game or category, "", now()))
+        await db.commit()
+    await c.message.edit_text(
+        f"🧾 <b>ĐẶT MUA {escape(game or category)}</b>\n\n"
+        f"Sản phẩm: <b>{escape(name)}</b>\nGiá: <b>{money(price)}</b>\n\n"
+        "✍️ Vui lòng gửi <b>TÊN TÀI KHOẢN / THÔNG TIN NHẬN DỊCH VỤ</b>.\n"
+        "Không gửi mật khẩu hoặc mã OTP.",
+        reply_markup=back_kb("home"))
+    await c.answer()
+
+
+async def has_purchase_draft(m: Message) -> bool:
+    if not m.from_user or not m.text or m.text.startswith("/"):
+        return False
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT 1 FROM purchase_drafts d JOIN services s ON s.id=d.service_id "
+            "WHERE d.user_id=? AND s.active=1 LIMIT 1",
+            (m.from_user.id,))).fetchone()
+    return row is not None
+
+
+@dp.message(F.text, has_purchase_draft)
+async def receive_purchase_account(m: Message):
+    if not m.from_user or not m.text or m.text.startswith("/"):
+        return
+    await ensure_user(m.from_user)
+    account_name = m.text.strip()
+    if not account_name or len(account_name) > 80 or "\n" in account_name:
+        return
+    async with await db_connect() as db:
+        draft = await (await db.execute(
+            "SELECT d.service_id,d.game,s.name,s.price FROM purchase_drafts d "
+            "JOIN services s ON s.id=d.service_id WHERE d.user_id=? AND s.active=1",
+            (m.from_user.id,))).fetchone()
+        if not draft:
+            return
+        sid, game, name, price = draft
+        await db.execute("UPDATE purchase_drafts SET account_name=? WHERE user_id=?",
+                         (account_name, m.from_user.id))
+        await db.commit()
+        balance_row = await (await db.execute(
+            "SELECT balance FROM users WHERE user_id=?", (m.from_user.id,))).fetchone()
+        balance = int(balance_row[0]) if balance_row else 0
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📩 ĐẶT DỊCH VỤ", callback_data=f"buyconfirm:{sid}")
+    kb.button(text="✏️ SỬA TÊN TÀI KHOẢN", callback_data=f"buyedit:{sid}")
+    kb.button(text="❌ HỦY ĐƠN", callback_data="buycancel")
+    kb.adjust(1)
+    await m.answer(
+        f"📋 <b>XÁC NHẬN YÊU CẦU DỊCH VỤ</b>\\n\\n"
+        f"🎮 Site: <b>{escape(game)}</b>\\n"
+        f"📝 Dịch vụ: <b>{escape(name)}</b>\\n"
+        f"👤 Tài khoản: <code>{escape(account_name)}</code>\\n"
+        f"💰 Giá: <b>{money(price)}</b>\\n\\n"
+        "Bấm <b>ĐẶT DỊCH VỤ</b> để gửi yêu cầu đến ADMIN.\\n"
+        "Đơn chỉ được thực hiện sau khi ADMIN xác nhận.",
+        reply_markup=kb.as_markup())
+
+
+@dp.callback_query(F.data == "buycancel")
+async def cb_buy_cancel(c: CallbackQuery):
+    async with await db_connect() as db:
+        await db.execute("DELETE FROM purchase_drafts WHERE user_id=?", (c.from_user.id,))
+        await db.commit()
+    await c.message.edit_text("Đã hủy thao tác mua hàng.", reply_markup=back_kb())
+    await c.answer("Đã hủy.")
+
+
+@dp.callback_query(F.data.startswith("buyedit:"))
+async def cb_buy_edit(c: CallbackQuery):
+    try:
+        sid = int(c.data.split(":", 1)[1])
+    except ValueError:
+        await c.answer("Đơn không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT d.game,s.name,s.price FROM purchase_drafts d JOIN services s ON s.id=d.service_id "
+            "WHERE d.user_id=? AND d.service_id=? AND s.active=1",
+            (c.from_user.id, sid))).fetchone()
+        if not row:
+            await c.answer("Phiên đặt dịch vụ đã hết hạn.", show_alert=True)
+            return
+        game, name, price = row
+        await db.execute("UPDATE purchase_drafts SET account_name='' WHERE user_id=?", (c.from_user.id,))
+        await db.commit()
+    await c.message.edit_text(
+        f"📝 <b>NHẬP LẠI TÀI KHOẢN</b>\\nSite: <b>{escape(game)}</b>\\n"
+        f"Dịch vụ: <b>{escape(name)}</b> · {money(price)}\\n\\n"
+        "Vui lòng gửi chính xác tên tài khoản cần sử dụng. Không gửi mật khẩu hoặc OTP.")
+    await c.answer()
+
+
+@dp.callback_query(F.data.startswith("buyconfirm:"))
+async def cb_buy_confirm(c: CallbackQuery):
+    try:
+        sid = int(c.data.split(":", 1)[1])
+    except ValueError:
+        await c.answer("Yêu cầu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        draft = await (await db.execute(
+            "SELECT d.game,d.account_name,s.name,s.price FROM purchase_drafts d "
+            "JOIN services s ON s.id=d.service_id WHERE d.user_id=? AND d.service_id=? AND s.active=1",
+            (c.from_user.id, sid))).fetchone()
+        if not draft or not draft[1]:
+            await db.rollback()
+            await c.answer("Phiên đặt dịch vụ đã hết hạn. Vui lòng chọn lại.", show_alert=True)
+            return
+        game, account_name, name, price = draft
+        cur = await db.execute(
+            "INSERT INTO orders(user_id,service_id,service_name,price,status,created_at,game,account_name) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (c.from_user.id, sid, name, price, "pending_admin", now(), game, account_name))
+        oid = cur.lastrowid
+        await db.execute("DELETE FROM purchase_drafts WHERE user_id=?", (c.from_user.id,))
         await db.commit()
 
-    label = "✅ ĐÃ XÁC NHẬN" if status == "accepted" else "❌ ĐÃ TỪ CHỐI"
-    await call.answer("Đã cập nhật trạng thái đơn.")
-    await call.message.edit_text(call.message.text + f"\n\n<b>Trạng thái: {label}</b>")
+    username = f"@{c.from_user.username}" if c.from_user.username else "Không có username"
+    admin_kb = InlineKeyboardBuilder()
+    admin_kb.button(text="✅ ADMIN XÁC NHẬN", callback_data=f"orderapprove:{oid}")
+    admin_kb.button(text="❌ TỪ CHỐI", callback_data=f"orderreject:{oid}")
+    admin_kb.adjust(1)
+    admin_text = (
+        f"📥 <b>YÊU CẦU DỊCH VỤ MỚI #{oid}</b>\\n\\n"
+        f"Khách: {escape(c.from_user.full_name)} ({escape(username)})\\n"
+        f"Telegram ID: <code>{c.from_user.id}</code>\\n"
+        f"Site: <b>{escape(game)}</b>\\nDịch vụ: <b>{escape(name)}</b>\\n"
+        f"Tài khoản: <code>{escape(account_name)}</code>\\nGiá: <b>{money(price)}</b>\\n"
+        "Trạng thái: <b>Chờ ADMIN xác nhận</b>"
+    )
+    sent = False
+    for admin_id in ADMIN_IDS:
+        try:
+            await c.bot.send_message(admin_id, admin_text, reply_markup=admin_kb.as_markup())
+            sent = True
+        except Exception:
+            logging.exception("Cannot send service order to admin %s", admin_id)
+    await c.message.edit_text(
+        f"📨 <b>ĐÃ GỬI YÊU CẦU ĐẾN ADMIN</b>\\n\\n"
+        f"Mã đơn: <b>#{oid}</b>\\nSite: <b>{escape(game)}</b>\\n"
+        f"Dịch vụ: <b>{escape(name)}</b>\\nTài khoản: <code>{escape(account_name)}</code>\\n"
+        f"Giá: <b>{money(price)}</b>\\n\\n"
+        + ("ADMIN sẽ xem và xác nhận trước khi thực hiện." if sent else
+           "Bot chưa gửi được thông báo cho ADMIN. Vui lòng liên hệ ADMIN trực tiếp; yêu cầu vẫn được lưu."),
+        reply_markup=back_kb())
+    await c.answer("Đã gửi yêu cầu.")
+
+
+async def admin_update_order(c: CallbackQuery, approved: bool):
+    if not is_admin(c.from_user.id):
+        await c.answer("Bạn không có quyền xử lý đơn.", show_alert=True)
+        return
     try:
-        await bot.send_message(
-            user_id,
-            f"📦 <b>CẬP NHẬT ĐƠN HÀNG #{order_id}</b>\n"
-            f"Dịch vụ: {html.escape(service_name)}\n"
-            f"Trạng thái: {label}\n"
-            "Nếu cần hỗ trợ, vui lòng liên hệ ADMIN."
+        oid = int(c.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await c.answer("Mã đơn không hợp lệ.", show_alert=True)
+        return
+    new_status = "admin_confirmed" if approved else "rejected"
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT user_id,game,service_name,price,account_name,status FROM orders WHERE id=?",
+            (oid,))).fetchone()
+        if not row:
+            await c.answer("Không tìm thấy đơn.", show_alert=True)
+            return
+        uid, game, name, price, account_name, status = row
+        if status != "pending_admin":
+            await c.answer("Đơn này đã được xử lý trước đó.", show_alert=True)
+            return
+        await db.execute("UPDATE orders SET status=? WHERE id=?", (new_status, oid))
+        await db.commit()
+    try:
+        message = (
+            f"✅ <b>ADMIN ĐÃ XÁC NHẬN ĐƠN #{oid}</b>\\n"
+            f"Site: <b>{escape(game)}</b>\\nDịch vụ: <b>{escape(name)}</b>\\n"
+            f"Tài khoản: <code>{escape(account_name)}</code>\\n"
+            "Đơn đã được ADMIN xác nhận và chuyển sang bước thực hiện."
+            if approved else
+            f"❌ <b>ĐƠN #{oid} CHƯA ĐƯỢC CHẤP NHẬN</b>\\n"
+            "Vui lòng liên hệ ADMIN để biết thêm thông tin."
         )
+        await c.bot.send_message(uid, message)
     except Exception:
-        logging.exception("Cannot notify user for order %s", order_id)
+        logging.exception("Cannot notify customer for order %s", oid)
+    await c.message.edit_text(
+        f"{'✅ ĐÃ XÁC NHẬN' if approved else '❌ ĐÃ TỪ CHỐI'} ĐƠN #{oid}\\n"
+        f"Site: {escape(game)} · {escape(name)}\\nTài khoản: <code>{escape(account_name)}</code>\\n"
+        f"Giá: {money(price)} · Trạng thái: {new_status}")
+    await c.answer("Đã cập nhật đơn.")
 
 
-@dp.callback_query(F.data == "admin:pending")
-async def admin_pending(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Bạn không có quyền truy cập.", show_alert=True)
+@dp.callback_query(F.data.startswith("orderapprove:"))
+async def cb_order_approve(c: CallbackQuery):
+    await admin_update_order(c, True)
+
+
+@dp.callback_query(F.data.startswith("orderreject:"))
+async def cb_order_reject(c: CallbackQuery):
+    await admin_update_order(c, False)
+
+
+@dp.message(Command("addservice"))
+async def add_service(m: Message):
+    if not is_admin(m.from_user.id):
         return
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, user_id, service_name, price, created_at FROM orders "
-            "WHERE status='pending' ORDER BY id DESC LIMIT 20"
-        )
-        rows = await cur.fetchall()
-    await call.answer()
-    if not rows:
-        await call.message.edit_text("✅ Hiện không có đơn hàng chờ xử lý.", reply_markup=back_menu())
+    raw = (m.text or "").partition(" ")[2]
+    parts = [x.strip() for x in raw.split("|")]
+    if not parts or parts[0].upper() not in {"GAME", "SMS", "PRX"}:
+        await m.answer("Danh mục phải là GAME, SMS hoặc PRX.")
         return
-    lines = ["⏳ <b>DANH SÁCH ĐƠN ĐANG CHỜ</b>"]
-    for oid, uid, name, price, created in rows:
-        lines.append(
-            f"\n<b>#{oid}</b> · {html.escape(name)} · {money(price)}\n"
-            f"Khách ID: <code>{uid}</code>\n"
-            f"{html.escape(created)}"
-        )
-    await call.message.edit_text("\n".join(lines), reply_markup=back_menu())
-
-
-@dp.callback_query(F.data == "menu:topup")
-async def menu_topup(call: CallbackQuery):
-    await call.answer()
-    await call.message.edit_text(PAGE_TEXTS['topup'], reply_markup=back_menu())
-
-
-@dp.callback_query(F.data == "menu:guide")
-async def menu_guide(call: CallbackQuery):
-    await call.answer()
-    await call.message.edit_text(PAGE_TEXTS['guide'], reply_markup=back_menu())
-
-
-@dp.callback_query(F.data == "menu:history")
-async def menu_history(call: CallbackQuery):
-    await call.answer()
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, service_name, price, status, created_at FROM orders "
-            "WHERE user_id=? ORDER BY id DESC LIMIT 10",
-            (call.from_user.id,)
-        )
-        rows = await cur.fetchall()
-    if not rows:
-        await call.message.edit_text(
-            "📜 <b>LỊCH SỬ GIAO DỊCH</b>\n\nBạn chưa có đơn hàng nào.",
-            reply_markup=back_menu()
-        )
-        return
-    labels = {"pending": "⏳ Đang chờ ADMIN", "accepted": "✅ Đã xác nhận", "rejected": "❌ Đã từ chối"}
-    lines = ["📜 <b>LỊCH SỬ GIAO DỊCH</b>"]
-    for oid, name, price, status, created in rows:
-        lines.append(
-            f"\n<b>Đơn #{oid}</b> · {html.escape(name)}\n"
-            f"💰 {money(price)} · {labels.get(status, status)}\n"
-            f"🕒 {html.escape(created)}"
-        )
-    await call.message.edit_text("\n".join(lines), reply_markup=back_menu())
-
-
-@dp.callback_query(F.data == "menu:profile")
-async def menu_profile(call: CallbackQuery):
-    await call.answer()
-    user = call.from_user
-    balance = await get_balance(user.id)
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT joined_at FROM users WHERE user_id=?", (user.id,)
-        )
-        user_row = await cur.fetchone()
-        cur = await db.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM wallet_transactions "
-            "WHERE user_id=? AND amount>0", (user.id,)
-        )
-        total_deposited = (await cur.fetchone())[0]
-        cur = await db.execute(
-            "SELECT COALESCE(SUM(price), 0) FROM orders "
-            "WHERE user_id=? AND status='accepted'", (user.id,)
-        )
-        total_spent = (await cur.fetchone())[0]
-    joined_at = user_row[0] if user_row else datetime.now(TZ).isoformat(timespec="seconds")
-    try:
-        joined_display = datetime.fromisoformat(joined_at).astimezone(TZ).strftime("%d/%m/%Y %H:%M")
-    except (TypeError, ValueError):
-        joined_display = str(joined_at)
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user.id,))
-        referred_count = (await cur.fetchone())[0]
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 NẠP TIỀN", callback_data="profile:topup")],
-        [InlineKeyboardButton(text="🛍️ LỊCH SỬ MUA HÀNG", callback_data="profile:orders")],
-        [InlineKeyboardButton(text="💳 LỊCH SỬ NẠP TIỀN", callback_data="profile:topups")],
-        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
-    ])
-    await call.message.edit_text(
-        "👤 <b>THÔNG TIN TÀI KHOẢN CÁ NHÂN</b>\n\n"
-        f"✨ Họ và tên: <b>{html.escape(user.full_name)}</b>\n\n"
-        f"🔗 Telegram ID: <code>{user.id}</code>\n\n"
-        f"💳 Số dư hiện tại: <b>{money(balance)}</b>\n\n"
-        f"✅ Tổng tiền đã nạp: <b>{money(total_deposited)}</b>\n\n"
-        f"❌ Tổng tiền đã chi: <b>{money(total_spent)}</b>\n\n"
-        f"⏰ Ngày tham gia: <b>{html.escape(joined_display)}</b>\n\n"
-        f"👥 Đã giới thiệu: <b>{referred_count}</b> thành viên",
-        reply_markup=kb
-    )
-
-
-@dp.callback_query(F.data == "profile:topup")
-async def profile_topup(call: CallbackQuery):
-    await call.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 QUAY LẠI CÁ NHÂN", callback_data="menu:profile")],
-        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
-    ])
-    await call.message.edit_text(PAGE_TEXTS["topup"], reply_markup=kb)
-
-
-@dp.callback_query(F.data == "profile:orders")
-async def profile_order_history(call: CallbackQuery):
-    await call.answer()
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, service_name, price, status, created_at FROM orders "
-            "WHERE user_id=? ORDER BY id DESC LIMIT 20",
-            (call.from_user.id,)
-        )
-        rows = await cur.fetchall()
-    labels = {"pending": "⏳ Đang chờ ADMIN", "accepted": "✅ Đã xác nhận", "rejected": "❌ Đã từ chối"}
-    lines = ["🛍️ <b>LỊCH SỬ MUA HÀNG</b>"]
-    for oid, name, price, status, created in rows:
-        lines.append(
-            f"\n<b>Đơn #{oid} · {html.escape(name)}</b>\n"
-            f"💰 Giá: {money(price)}\n"
-            f"📌 Trạng thái: {labels.get(status, status)}\n"
-            f"🕒 {html.escape(created)}"
-        )
-    if not rows:
-        lines.append("\nBạn chưa có đơn hàng nào.")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 CẬP NHẬT", callback_data="profile:orders")],
-        [InlineKeyboardButton(text="🔙 QUAY LẠI CÁ NHÂN", callback_data="menu:profile")]
-    ])
-    await call.message.edit_text("\n".join(lines), reply_markup=kb)
-
-
-@dp.callback_query(F.data == "profile:topups")
-async def profile_topup_history(call: CallbackQuery):
-    await call.answer()
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT amount, note, created_at FROM wallet_transactions "
-            "WHERE user_id=? AND amount>0 ORDER BY id DESC LIMIT 20",
-            (call.from_user.id,)
-        )
-        rows = await cur.fetchall()
-    lines = ["💳 <b>LỊCH SỬ NẠP TIỀN</b>"]
-    for amount, note, created in rows:
-        lines.append(
-            f"\n➕ Số tiền: <b>{money(amount)}</b>\n"
-            f"📝 Nội dung: {html.escape(note)}\n"
-            f"🕒 {html.escape(created)}"
-        )
-    if not rows:
-        lines.append("\nBạn chưa có giao dịch cộng tiền nào.")
-    balance = await get_balance(call.from_user.id)
-    lines.append(f"\n💰 Số dư hiện tại: <b>{money(balance)}</b>")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 CẬP NHẬT", callback_data="profile:topups")],
-        [InlineKeyboardButton(text="🔙 QUAY LẠI CÁ NHÂN", callback_data="menu:profile")]
-    ])
-    await call.message.edit_text("\n".join(lines), reply_markup=kb)
-
-
-@dp.callback_query(F.data == "menu:referral")
-async def menu_referral(call: CallbackQuery):
-    await call.answer()
-    user_id = call.from_user.id
-    bot_username = "nghiengame_bot"
-    referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-    share_text = quote("Mời bạn sử dụng NGHIEN CODE BOT tại đây:")
-    share_url = f"https://t.me/share/url?url={quote(referral_link, safe='')}&text={share_text}"
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (user_id,))
-        referred_count = (await cur.fetchone())[0]
-
-    text = (
-        "🎁 <b>CHIA SẺ NGHIEN CODE BOT</b>\n\n"
-        "🔗 Link giới thiệu riêng của bạn:\n"
-        f"<code>{html.escape(referral_link)}</code>\n\n"
-        f"👥 Số người đã tham gia qua link: <b>{referred_count}</b>\n\n"
-        "📌 Gửi link này cho bạn bè. Khi người mới mở bot lần đầu bằng link của bạn, "
-        "hệ thống sẽ ghi nhận lượt giới thiệu."
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 CHIA SẺ LINK BOT", url=share_url)],
-        [InlineKeyboardButton(text="🔄 CẬP NHẬT", callback_data="menu:referral")],
-        [InlineKeyboardButton(text="🏠 MENU CHÍNH", callback_data="menu:home")]
-    ])
-    await call.message.edit_text(text, reply_markup=kb)
-
-
-@dp.callback_query(F.data == "menu:other")
-async def menu_other(call: CallbackQuery):
-    await call.answer()
-    await call.message.edit_text(PAGE_TEXTS['other'], reply_markup=back_menu())
-
-
-
-@dp.callback_query(F.data == "admin:notify")
-async def admin_notify_prompt(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    ADMIN_WALLET_STATE[call.from_user.id] = "notify_user_id"
-    await call.answer()
-    await call.message.answer(
-        "📨 <b>GỬI THÔNG BÁO RIÊNG</b>\n\n"
-        "Gửi Telegram ID của người nhận.\n"
-        "Sau đó gửi nội dung thông báo.\n"
-        "Dùng /cancel để hủy."
-    )
-
-
-@dp.callback_query(F.data == "admin:wallet")
-async def admin_wallet_menu(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    await call.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ CỘNG TIỀN", callback_data="admin:wallet:add"),
-         InlineKeyboardButton(text="➖ TRỪ TIỀN", callback_data="admin:wallet:sub")],
-        [InlineKeyboardButton(text="🔎 KIỂM TRA SỐ DƯ", callback_data="admin:wallet:check"),
-         InlineKeyboardButton(text="📜 LỊCH SỬ", callback_data="admin:wallet:history")],
-        [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
-    ])
-    await call.message.edit_text("💰 <b>QUẢN LÝ SỐ DƯ</b>", reply_markup=kb)
-
-
-@dp.callback_query(F.data.in_({"admin:wallet:add", "admin:wallet:sub", "admin:wallet:check"}))
-async def admin_wallet_prompt(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    action = call.data.rsplit(":", 1)[1]
-    ADMIN_WALLET_STATE[call.from_user.id] = action
-    await call.answer()
-    prompt = "Gửi Telegram ID người dùng." if action == "check" else "Gửi theo mẫu: <code>TelegramID SốTiền Ghi chú</code>\nVí dụ: <code>123456789 50000 Hoàn tiền đơn #12</code>\nGửi /cancel để hủy."
-    await call.message.answer(prompt)
-
-
-@dp.callback_query(F.data == "admin:wallet:history")
-async def admin_wallet_history(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    await call.answer()
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT admin_id,user_id,amount,note,created_at FROM wallet_transactions ORDER BY id DESC LIMIT 15")
-        rows = await cur.fetchall()
-    text = "\n".join(
-        f"UID <code>{uid}</code> · {amount:+,}đ\nADMIN {admin} · {html.escape(note)} · {html.escape(created)}"
-        for admin, uid, amount, note, created in rows
-    ) if rows else "Chưa có giao dịch."
-    await call.message.edit_text("📜 <b>LỊCH SỬ CỘNG/TRỪ TIỀN</b>\n\n" + text,
-                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]]))
-
-
-@dp.callback_query(F.data == "admin:back")
-async def admin_back(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    await call.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 QUẢN LÝ SỐ DƯ", callback_data="admin:wallet")],
-        [InlineKeyboardButton(text="📨 GỬI THÔNG BÁO USER", callback_data="admin:notify")],
-        [InlineKeyboardButton(text="🛍️ QUẢN LÝ DỊCH VỤ", callback_data="admin:services")],
-        [InlineKeyboardButton(text="🔘 CHỈNH NÚT MENU", callback_data="admin:buttons")],
-        [InlineKeyboardButton(text="🖼️ CHỈNH ẢNH BOT", callback_data="admin:images")],
-        [InlineKeyboardButton(text="📝 CHỈNH VĂN BẢN", callback_data="admin:commands")],
-        [InlineKeyboardButton(text="📋 ĐƠN CHỜ XỬ LÝ", callback_data="admin:pending")]
-    ])
-    await call.message.edit_text("🔐 <b>BẢNG ĐIỀU KHIỂN ADMIN</b>", reply_markup=kb)
-
-
-@dp.message(Command("cancel"))
-async def admin_cancel(message: Message):
-    ADMIN_WALLET_STATE.pop(message.from_user.id, None)
-    await message.answer("Đã hủy thao tác.")
-
-
-@dp.message(lambda message: message.from_user and message.from_user.id in ADMIN_WALLET_STATE and ADMIN_WALLET_STATE[message.from_user.id] in ("add", "sub", "check") and message.text)
-async def admin_wallet_input(message: Message):
-    uid = message.from_user.id
-    action = ADMIN_WALLET_STATE.get(uid)
-    if not action:
-        return
-    if not is_admin(uid):
-        ADMIN_WALLET_STATE.pop(uid, None)
-        return
-    raw = (message.text or "").strip()
-    if raw == "/cancel":
-        ADMIN_WALLET_STATE.pop(uid, None)
-        await message.answer("Đã hủy thao tác.")
-        return
-    try:
-        if action == "check":
-            if not raw.isdigit():
-                raise ValueError("Gửi Telegram ID dạng số.")
-            target = int(raw)
-            async with aiosqlite.connect(DB_PATH) as db:
-                cur = await db.execute("SELECT balance FROM wallets WHERE user_id=?", (target,))
-                row = await cur.fetchone()
-            balance = row[0] if row else 0
-            ADMIN_WALLET_STATE.pop(uid, None)
-            await message.answer(f"UID <code>{target}</code>\nSố dư: <b>{money(balance)}</b>")
+    category = parts[0].upper()
+    if category == "GAME" and len(parts) == 4:
+        game, name, price_text = parts[1].upper(), parts[2], parts[3]
+        if game not in GAME_SITES:
+            await m.answer("Tên game không hợp lệ. Hãy dùng site có trong danh sách bot.")
             return
-        parts = raw.split(maxsplit=2)
-        if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
-            raise ValueError("Dùng: TelegramID SốTiền Ghi chú")
-        target, amount = int(parts[0]), int(parts[1])
-        if target <= 0 or amount <= 0:
-            raise ValueError("ID và số tiền phải lớn hơn 0.")
-        note = parts[2] if len(parts) > 2 else "Điều chỉnh bởi ADMIN"
-        delta = amount if action == "add" else -amount
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("INSERT OR IGNORE INTO wallets(user_id,balance) VALUES (?,0)", (target,))
-            cur = await db.execute("SELECT balance FROM wallets WHERE user_id=?", (target,))
-            balance = (await cur.fetchone())[0]
-            if balance + delta < 0:
-                raise ValueError(f"Số dư hiện tại {money(balance)}, không thể trừ.")
-            await db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (delta,target))
-            await db.execute("INSERT INTO wallet_transactions(admin_id,user_id,amount,note,created_at) VALUES (?,?,?,?,?)",
-                             (uid,target,delta,note,datetime.now(TZ).isoformat(timespec="seconds")))
-            await db.commit()
-        ADMIN_WALLET_STATE.pop(uid, None)
-        await message.answer(f"✅ Đã {'cộng' if delta > 0 else 'trừ'} {money(amount)} cho UID <code>{target}</code>.\nSố dư mới: <b>{money(balance+delta)}</b>")
-        try:
-            await message.bot.send_message(target, f"💰 Số dư được ADMIN điều chỉnh: <b>{delta:+,}đ</b>\nSố dư hiện tại: <b>{money(balance+delta)}</b>\nGhi chú: {html.escape(note)}")
-        except Exception:
-            logging.info("Không gửi được thông báo số dư UID %s", target)
-    except ValueError as exc:
-        await message.answer("⚠️ " + html.escape(str(exc)) + "\nGửi lại hoặc /cancel.")
-
-
-@dp.callback_query(F.data == "admin:services")
-async def admin_services_menu(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    await call.answer()
-    rows = [[InlineKeyboardButton(text=f"✏️ {name} · {money(price)}", callback_data=f"admin:service:{key}")]
-            for key, (name, price, _) in SERVICES.items()]
-    rows.append([InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")])
-    await call.message.edit_text("🛍️ <b>CHỌN DỊCH VỤ CẦN SỬA</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-@dp.callback_query(F.data.startswith("admin:service:"))
-async def admin_service_prompt(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    key = call.data.split(":", 2)[2]
-    if key not in SERVICES:
-        await call.answer("Không tìm thấy dịch vụ.", show_alert=True)
-        return
-    ADMIN_WALLET_STATE[call.from_user.id] = "service:" + key
-    await call.answer()
-    await call.message.answer("Gửi theo mẫu: <code>Tên mới | Giá mới | Mô tả mới</code>\n/cancel để hủy.")
-
-
-@dp.callback_query(F.data == "admin:buttons")
-async def admin_buttons_menu(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    await call.answer()
-    rows = [[InlineKeyboardButton(text=f"✏️ {label}", callback_data=f"admin:button:{key}")]
-            for key, label in MENU_LABELS.items()]
-    rows.append([InlineKeyboardButton(text="🔗 SỬA LINK CSKH", callback_data="admin:button:support_url")])
-    rows.append([InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")])
-    await call.message.edit_text("🔘 <b>CHỌN NÚT MENU CẦN SỬA</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-@dp.callback_query(F.data.startswith("admin:button:"))
-async def admin_button_prompt(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    key = call.data.split(":", 2)[2]
-    if key == "support_url":
-        ADMIN_WALLET_STATE[call.from_user.id] = "support_url"
-        prompt = "Gửi link CSKH mới bắt đầu bằng https://"
-    elif key in MENU_LABELS:
-        ADMIN_WALLET_STATE[call.from_user.id] = "button:" + key
-        prompt = "Gửi tên mới cho nút menu."
+    elif len(parts) == 3:
+        game, name, price_text = "", parts[1], parts[2]
     else:
-        await call.answer("Không tìm thấy nút.", show_alert=True)
+        await m.answer("Cú pháp: <code>/addservice GAME|SITE|Tên dịch vụ|Giá</code> hoặc <code>/addservice SMS|Tên|Giá</code>.")
         return
-    await call.answer()
-    await call.message.answer(prompt)
-
-
-@dp.callback_query(F.data == "admin:images")
-async def admin_images_menu(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
+    if not name or not price_text.isdigit() or int(price_text) <= 0:
+        await m.answer("Tên dịch vụ hoặc giá không hợp lệ.")
         return
-    await call.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 TẢI ẢNH /start LÊN", callback_data="admin:image:upload")],
-        [InlineKeyboardButton(text="🗑️ GỠ ẢNH /start", callback_data="admin:image:remove")],
-        [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
-    ])
-    await call.message.edit_text("🖼️ <b>QUẢN LÝ ẢNH BOT</b>\n\nẢnh được dùng ở màn hình /start. Gửi ảnh trực tiếp cho bot sau khi bấm TẢI ẢNH.", reply_markup=kb)
+    price = int(price_text)
+    async with await db_connect() as db:
+        cur = await db.execute("INSERT INTO services(name,price,category,game) VALUES(?,?,?,?)",
+                               (name, price, category, game))
+        sid = cur.lastrowid
+        await db.commit()
+    await m.answer(f"✅ Đã thêm sản phẩm #{sid}: <b>{escape(name)}</b> · {category} · {escape(game or 'Tất cả')} · {money(price)}")
 
-
-@dp.callback_query(F.data == "admin:image:upload")
-async def admin_image_upload(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
+@dp.message(Command("delservice"))
+async def del_service(m: Message):
+    if not is_admin(m.from_user.id):
         return
-    ADMIN_WALLET_STATE[call.from_user.id] = "home_photo"
-    await call.answer()
-    await call.message.answer("📤 Gửi ảnh mới cho bot dưới dạng ẢNH (không gửi dạng tệp). /cancel để hủy.")
-
-
-@dp.callback_query(F.data == "admin:image:remove")
-async def admin_image_remove(call: CallbackQuery):
-    global HOME_PHOTO_ID
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
+    parts = (m.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await m.answer("Cú pháp: <code>/delservice ID</code>")
         return
-    await save_setting("home_photo_id", "")
-    HOME_PHOTO_ID = None
-    await call.answer("Đã gỡ ảnh.", show_alert=True)
-    await call.message.edit_text("✅ Đã gỡ ảnh /start. Bot sẽ hiển thị nội dung dạng văn bản.", reply_markup=back_menu())
+    async with await db_connect() as db:
+        await db.execute("UPDATE services SET active=0 WHERE id=?", (int(parts[1]),))
+        await db.commit()
+    await m.answer("✅ Đã ẩn sản phẩm.")
 
-
-@dp.message(F.photo)
-async def admin_photo_input(message: Message):
-    global HOME_PHOTO_ID
-    uid = message.from_user.id
-    if not is_admin(uid) or ADMIN_WALLET_STATE.get(uid) != "home_photo":
+@dp.message(Command("addroom"))
+async def add_room(m: Message):
+    if not is_admin(m.from_user.id):
         return
-    HOME_PHOTO_ID = message.photo[-1].file_id
-    await save_setting("home_photo_id", HOME_PHOTO_ID)
-    ADMIN_WALLET_STATE.pop(uid, None)
-    await message.answer("✅ Đã lưu ảnh /start. Ảnh sẽ hiển thị khi người dùng mở bot.")
-
-
-@dp.callback_query(F.data == "admin:commands")
-async def admin_commands_menu(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
+    if len(parts) != 3 or parts[0].upper() not in set(BRANDS + ["HI88", "QQ88"]):
+        await m.answer("Cú pháp: <code>/addroom XX8|Tên phòng|2026-11-12 20:00</code>")
         return
-    await call.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ NỘI DUNG /start", callback_data="admin:command:welcome")],
-        [InlineKeyboardButton(text="✏️ NỘI DUNG /help", callback_data="admin:command:help")],
-        [InlineKeyboardButton(text="✏️ TRANG NẠP TIỀN", callback_data="admin:page:topup")],
-        [InlineKeyboardButton(text="✏️ TRANG HƯỚNG DẪN", callback_data="admin:page:guide")],
-        [InlineKeyboardButton(text="✏️ TRANG GIỚI THIỆU", callback_data="admin:page:referral")],
-        [InlineKeyboardButton(text="✏️ TRANG DỊCH VỤ KHÁC", callback_data="admin:page:other")],
-        [InlineKeyboardButton(text="🔙 ADMIN", callback_data="admin:back")]
-    ])
-    await call.message.edit_text("📝 <b>CHỈNH VĂN BẢN BOT</b>\n/start hỗ trợ {name}, {date}, {time}. Các trang hỗ trợ HTML Telegram.", reply_markup=kb)
-
-
-@dp.callback_query(F.data.startswith("admin:page:"))
-async def admin_page_prompt(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    key = call.data.split(":", 2)[2]
-    if key not in PAGE_TEXTS:
-        await call.answer("Trang không hợp lệ.", show_alert=True)
-        return
-    ADMIN_WALLET_STATE[call.from_user.id] = "page:" + key
-    await call.answer()
-    await call.message.answer("Gửi toàn bộ nội dung mới cho trang này. Có thể dùng HTML Telegram. /cancel để hủy.")
-
-
-@dp.callback_query(F.data.startswith("admin:command:"))
-async def admin_command_prompt(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Không có quyền.", show_alert=True)
-        return
-    key = call.data.split(":", 2)[2]
-    if key not in ("welcome", "help"):
-        await call.answer("Lệnh không hợp lệ.", show_alert=True)
-        return
-    ADMIN_WALLET_STATE[call.from_user.id] = "command:" + key
-    await call.answer()
-    await call.message.answer("Gửi toàn bộ nội dung mới. HTML Telegram được hỗ trợ. /cancel để hủy.")
-
-
-@dp.message(F.text)
-async def admin_config_input(message: Message):
-    global SUPPORT_URL, WELCOME_TEMPLATE, HELP_TEMPLATE
-    uid = message.from_user.id
-    state = ADMIN_WALLET_STATE.get(uid)
-    if not state or not is_admin(uid):
-        return
-    raw = (message.text or "").strip()
-    if raw == "/cancel":
-        ADMIN_WALLET_STATE.pop(uid, None)
-        ADMIN_NOTIFY_TARGET.pop(uid, None)
-        await message.answer("Đã hủy.")
-        return
-    if state == "notify_user_id":
-        if not raw.isdigit() or int(raw) <= 0:
-            await message.answer("⚠️ Telegram ID phải là số hợp lệ. Gửi lại hoặc /cancel.")
-            return
-        ADMIN_NOTIFY_TARGET[uid] = int(raw)
-        ADMIN_WALLET_STATE[uid] = "notify_message"
-        await message.answer("✍️ Gửi nội dung thông báo cần chuyển đến người dùng.")
-        return
-    if state == "notify_message":
-        target = ADMIN_NOTIFY_TARGET.get(uid)
-        if not target:
-            ADMIN_WALLET_STATE.pop(uid, None)
-            await message.answer("⚠️ Phiên gửi thông báo đã hết. Hãy thao tác lại /admin.")
-            return
-        try:
-            await message.bot.send_message(target, "📢 <b>THÔNG BÁO TỪ NGHIEN CODE</b>\n\n" + html.escape(raw))
-        except Exception:
-            logging.exception("Cannot send admin notification to user %s", target)
-            await message.answer("❌ Không gửi được. Người dùng có thể chưa từng nhấn /start hoặc đã chặn bot. Kiểm tra lại Telegram ID.")
-            return
-        ADMIN_WALLET_STATE.pop(uid, None)
-        ADMIN_NOTIFY_TARGET.pop(uid, None)
-        await message.answer(f"✅ Đã gửi thông báo thành công đến UID <code>{target}</code>.")
-        return
+    brand, title, starts = parts[0].upper(), parts[1], parts[2]
     try:
-        if state.startswith("service:"):
-            key = state.split(":", 1)[1]
-            parts = [x.strip() for x in raw.split("|", 2)]
-            if len(parts) != 3 or not parts[1].isdigit():
-                raise ValueError("Dùng: Tên | Giá | Mô tả")
-            name, price, desc = parts[0], int(parts[1]), parts[2]
-            if not name or not desc or price < 0:
-                raise ValueError("Thông tin dịch vụ không hợp lệ.")
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("UPDATE service_catalog SET service_name=?,price=?,description=? WHERE service_key=?", (name, price, desc, key))
-                await db.commit()
-            SERVICES[key] = (name, price, desc)
-            ADMIN_WALLET_STATE.pop(uid, None)
-            await message.answer(f"✅ Đã sửa dịch vụ {html.escape(name)} · {money(price)}")
-        elif state.startswith("button:"):
-            key = state.split(":", 1)[1]
-            if len(raw) > 64:
-                raise ValueError("Tên nút tối đa 64 ký tự.")
-            await save_setting("menu_" + key, raw)
-            MENU_LABELS[key] = raw
-            ADMIN_WALLET_STATE.pop(uid, None)
-            await message.answer("✅ Đã đổi tên nút. Mở lại /start để xem.")
-        elif state == "support_url":
-            if not raw.startswith("https://"):
-                raise ValueError("Link phải bắt đầu bằng https://")
-            await save_setting("support_url", raw)
-            SUPPORT_URL = raw
-            ADMIN_WALLET_STATE.pop(uid, None)
-            await message.answer("✅ Đã đổi link CSKH. Mở lại /start để xem.")
-        elif state.startswith("page:"):
-            key = state.split(":", 1)[1]
-            if len(raw) > 3500:
-                raise ValueError("Nội dung tối đa 3500 ký tự.")
-            await save_setting("page_" + key, raw)
-            PAGE_TEXTS[key] = raw
-            ADMIN_WALLET_STATE.pop(uid, None)
-            await message.answer("✅ Đã lưu nội dung trang.")
-        elif state.startswith("command:"):
-            key = state.split(":", 1)[1]
-            if len(raw) > 3500:
-                raise ValueError("Nội dung tối đa 3500 ký tự.")
-            if key == "welcome":
-                await save_setting("welcome_text", raw)
-                WELCOME_TEMPLATE = raw
-            else:
-                await save_setting("help_text", raw)
-                HELP_TEMPLATE = raw
-            ADMIN_WALLET_STATE.pop(uid, None)
-            await message.answer("✅ Đã lưu nội dung lệnh.")
-    except ValueError as exc:
-        await message.answer("⚠️ " + html.escape(str(exc)) + "\nGửi lại đúng mẫu hoặc /cancel.")
+        datetime.strptime(starts, "%Y-%m-%d %H:%M")
+    except ValueError:
+        await m.answer("Thời gian phải theo định dạng YYYY-MM-DD HH:MM.")
+        return
+    async with await db_connect() as db:
+        cur = await db.execute("INSERT INTO minigame_rooms(brand,title,starts_at,created_at) VALUES(?,?,?,?)",
+                               (brand, title, starts, now()))
+        rid = cur.lastrowid
+        await db.commit()
+    await m.answer(f"✅ Đã tạo phòng Minigame #{rid}: <b>{escape(brand)} – {escape(title)}</b> · {escape(starts)}")
 
+@dp.message(Command("roomstatus"))
+async def room_status(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
+    if len(parts) != 2 or not parts[0].isdigit() or parts[1] not in {"open", "closed", "full"}:
+        await m.answer("Cú pháp: <code>/roomstatus ID|open</code> (hoặc closed/full)")
+        return
+    async with await db_connect() as db:
+        cur = await db.execute("UPDATE minigame_rooms SET status=? WHERE id=?", (parts[1], int(parts[0])))
+        await db.commit()
+    await m.answer("✅ Đã cập nhật trạng thái phòng." if cur.rowcount else "Không tìm thấy phòng.")
+
+@dp.message(Command("result"))
+async def publish_result(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|", 1)]
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1]:
+        await m.answer("Cú pháp: <code>/result ID|Nội dung kết quả</code>")
+        return
+    rid, result = int(parts[0]), parts[1]
+    async with await db_connect() as db:
+        cur = await db.execute("UPDATE minigame_rooms SET result=?,status='finished' WHERE id=?", (result, rid))
+        await db.commit()
+    await m.answer("🏁 Đã công bố kết quả." if cur.rowcount else "Không tìm thấy phòng.")
+
+@dp.message(Command("roomsadmin"))
+async def rooms_admin(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,brand,title,starts_at,status FROM minigame_rooms ORDER BY id DESC LIMIT 30")).fetchall()
+    if not rows:
+        await m.answer("Chưa có phòng Minigame.")
+        return
+    lines = ["📋 <b>DANH SÁCH PHÒNG</b>"]
+    for rid, brand, title, starts, status in rows:
+        lines.append(f"#{rid} · {escape(brand)} · {escape(title)} · {escape(starts)} · {escape(status)}")
+    await m.answer("\n".join(lines))
+
+@dp.message(Command("duyetnap"))
+async def approve_deposit(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await m.answer("Cú pháp: <code>/duyetnap ID</code>")
+        return
+    did = int(parts[1])
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT user_id,amount,status FROM deposits WHERE id=?", (did,))).fetchone()
+        if not row:
+            await m.answer("Không tìm thấy yêu cầu.")
+            return
+        uid, amount, status = row
+        if status != "pending":
+            await m.answer("Yêu cầu đã được xử lý.")
+            return
+        await db.execute("UPDATE deposits SET status='approved' WHERE id=?", (did,))
+        await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (amount, uid))
+        await db.commit()
+    await m.answer(f"✅ Đã duyệt nạp #{did}: {money(amount)}.")
+    try:
+        await m.bot.send_message(uid, f"🎉 Nạp tiền thành công: <b>{money(amount)}</b>.")
+    except Exception:
+        pass
+
+@dp.message(Command("huy"))
+async def reject_deposit(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 3 or parts[1].lower() != "nap" or not parts[2].isdigit():
+        await m.answer("Cú pháp: <code>/huy nap ID</code>")
+        return
+    did = int(parts[2])
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT user_id,status FROM deposits WHERE id=?", (did,))).fetchone()
+        if not row:
+            await m.answer("Không tìm thấy yêu cầu.")
+            return
+        uid, status = row
+        if status != "pending":
+            await m.answer("Yêu cầu đã được xử lý.")
+            return
+        await db.execute("UPDATE deposits SET status='rejected' WHERE id=?", (did,))
+        await db.commit()
+    await m.answer(f"Đã từ chối yêu cầu nạp #{did}.")
+    try:
+        await m.bot.send_message(uid, f"Yêu cầu nạp #{did} đã bị từ chối.")
+    except Exception:
+        pass
+
+@dp.message(Command("setbalance"))
+async def set_balance(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await m.answer("Cú pháp: <code>/setbalance USER_ID SỐ_TIỀN</code>")
+        return
+    uid, amount = int(parts[1]), int(parts[2])
+    async with await db_connect() as db:
+        cur = await db.execute("UPDATE users SET balance=? WHERE user_id=?", (amount, uid))
+        await db.commit()
+    await m.answer("✅ Đã cập nhật số dư." if cur.rowcount else "Không tìm thấy người dùng.")
+
+@dp.message(Command("stats"))
+async def stats(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    async with await db_connect() as db:
+        users = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
+        orders = (await (await db.execute("SELECT COUNT(*) FROM orders")).fetchone())[0]
+        pending = (await (await db.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'")).fetchone())[0]
+        rooms = (await (await db.execute("SELECT COUNT(*) FROM minigame_rooms")).fetchone())[0]
+    await m.answer(f"📊 <b>THỐNG KÊ</b>\nNgười dùng: {users}\nĐơn hàng: {orders}\nNạp chờ duyệt: {pending}\nPhòng Minigame: {rooms}")
+
+@dp.message(Command("admin"))
+async def admin_cmd(m: Message):
+    if not is_admin(m.from_user.id):
+        await m.answer("Bạn không có quyền.")
+        return
+    await m.answer("🛠 <b>LỆNH ADMIN</b>\n/addservice GAME|SITE|Tên|Giá\n/addservice SMS|Tên|Giá\n/addservice PRX|Tên|Giá\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\n/roomstatus ID|open\n/result ID|Kết quả\n/roomsadmin\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats")
 
 async def main():
     await init_db()
-    bot = Bot(
-        token=BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Mở menu chính"),
-        BotCommand(command="help", description="Hướng dẫn"),
-        BotCommand(command="id", description="Xem Telegram ID"),
-        BotCommand(command="orders", description="Xem đơn hàng"),
-        BotCommand(command="admin", description="Khu vực quản trị"),
-    ])
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
-
+    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
