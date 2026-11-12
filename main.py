@@ -24,12 +24,16 @@ async def init_db():
     async with aiosqlite.connect(DB) as db:
         await db.executescript("""
         CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT, balance INTEGER NOT NULL DEFAULT 0, blocked INTEGER NOT NULL DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, game TEXT DEFAULT '', name TEXT NOT NULL, price INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, game TEXT DEFAULT '', name TEXT NOT NULL, price INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1, description TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, product_id INTEGER, category TEXT, product_name TEXT, game TEXT, account TEXT, price INTEGER, status TEXT DEFAULT 'processing', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS deposits(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, status TEXT DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS admin_logs(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, action TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         """)
+        try:
+            await db.execute("ALTER TABLE products ADD COLUMN description TEXT DEFAULT ''")
+        except Exception:
+            pass
         await db.commit()
 
 def kb(rows):
@@ -182,8 +186,7 @@ async def admin_actions(c: CallbackQuery):
     if key=="refresh":
         await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
     elif key=="add":
-        pending[c.from_user.id]="addproduct"
-        await c.message.answer("➕ THÊM SẢN PHẨM\\nNhập theo mẫu: DANH_MỤC|GAME|TÊN SẢN PHẨM|GIÁ\\nVí dụ: GAME|XX8|CODE 100K|50000\\nDanh mục: GAME, SHARE, SMS, PRX.")
+        await c.message.edit_text("➕ THÊM SẢN PHẨM\\nBƯỚC 1/4 — Chọn danh mục:",reply_markup=kb([("🎮 GAME","apw:GAME"),("🔗 SHARE","apw:SHARE"),("📩 SMS","apw:SMS"),("🌐 PRX","apw:PRX"),("⬅️ MENU ADMIN","a:refresh")]))
     elif key=="products":
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT id,category,game,name,price,active FROM products ORDER BY id DESC LIMIT 30"); rows=await cur.fetchall()
@@ -211,6 +214,48 @@ async def admin_actions(c: CallbackQuery):
     elif key=="minitext":
         pending[c.from_user.id]="minitext"
         await c.message.answer("✏️ NHẬP NỘI DUNG MINIGAME LIVE (chỉ thông tin/thể lệ).")
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("apw:"))
+async def add_product_category(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    category=c.data.split(":",1)[1]
+    if category not in {"GAME","SHARE","SMS","PRX"}: return await c.answer("Danh mục không hợp lệ.",show_alert=True)
+    if category=="GAME":
+        await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb([(g,f"agw:{g}") for g in GAMES]+[("⬅️ Quay lại","a:add")]))
+    else:
+        pending[c.from_user.id]={"add_stage":"name","category":category,"game":""}
+        await c.message.edit_text(f"Danh mục: {category}\nBƯỚC 2/4 — Nhập tên sản phẩm/dịch vụ:")
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("agw:"))
+async def add_product_game(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    game=c.data.split(":",1)[1]
+    if game not in GAMES: return await c.answer("Game không hợp lệ.",show_alert=True)
+    pending[c.from_user.id]={"add_stage":"name","category":"GAME","game":game}
+    await c.message.edit_text(f"Danh mục: GAME\nGame: {game}\nBƯỚC 3/4 — Nhập tên sản phẩm:")
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("apc:"))
+async def add_product_confirm(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    task=pending.get(c.from_user.id)
+    if not isinstance(task,dict) or task.get("add_stage")!="confirm": return await c.answer("Phiên thêm sản phẩm đã hết.",show_alert=True)
+    action=c.data.split(":",1)[1]
+    if action=="cancel":
+        pending.pop(c.from_user.id,None)
+        await c.message.edit_text("Đã hủy thêm sản phẩm.",reply_markup=admin_kb())
+    elif action=="edit":
+        task["add_stage"]="name"
+        pending[c.from_user.id]=task
+        await c.message.edit_text("Nhập lại tên sản phẩm:")
+    elif action=="save":
+        async with aiosqlite.connect(DB) as db:
+            await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",(task["category"],task["game"],task["name"],task["price"],task["description"]))
+            await db.commit()
+        pending.pop(c.from_user.id,None)
+        await c.message.edit_text("✅ Đã lưu sản phẩm.",reply_markup=admin_kb())
     await c.answer()
 
 @dp.callback_query(F.data.startswith("an:"))
@@ -369,7 +414,39 @@ async def photo_input(m: Message):
 async def process_admin_text(m: Message):
     uid=m.from_user.id
     task=pending.get(uid)
-    if uid not in ADMINS or not isinstance(task,str): return False
+    if uid not in ADMINS: return False
+    if isinstance(task,dict) and task.get("add_stage") in {"name","description","price"}:
+        value=(m.text or "").strip()
+        stage=task["add_stage"]
+        if not value:
+            await m.answer("Thông tin không được để trống. Vui lòng nhập lại.")
+            return True
+        if stage=="name":
+            task["name"]=value[:120]
+            task["add_stage"]="description"
+            pending[uid]=task
+            await m.answer("BƯỚC TIẾP THEO — Nhập mô tả/chi tiết sản phẩm. Nếu không có, nhập dấu -.")
+        elif stage=="description":
+            task["description"]="" if value=="-" else value[:1500]
+            task["add_stage"]="price"
+            pending[uid]=task
+            await m.answer("BƯỚC CUỐI — Nhập giá bán bằng số VNĐ (ví dụ 50000).")
+        else:
+            digits=re.sub(r"[^0-9]","",value)
+            if not digits or int(digits)<=0:
+                pending[uid]=task
+                await m.answer("Giá không hợp lệ. Nhập số tiền VNĐ lớn hơn 0.")
+                return True
+            task["price"]=int(digits)
+            task["add_stage"]="confirm"
+            pending[uid]=task
+            preview=(f"📋 XÁC NHẬN SẢN PHẨM\nDanh mục: {task['category']}\n"
+                     f"Game/Dịch vụ: {task['game'] or 'Không áp dụng'}\nTên: {task['name']}\n"
+                     f"Mô tả: {task['description'] or 'Chưa có'}\nGiá: {task['price']:,}đ\n\n"
+                     "Chọn lưu hoặc sửa lại:")
+            await m.answer(preview,reply_markup=kb([("✅ LƯU SẢN PHẨM","apc:save"),("✏️ SỬA TÊN","apc:edit"),("❌ HỦY","apc:cancel")]))
+        return True
+    if not isinstance(task,str) and not (isinstance(task,dict) and ("notify_stage" in task or "admin_price_id" in task)): return False
     if isinstance(task,dict) and task.get("notify_stage")=="user_id":
         raw=(m.text or "").strip()
         if not raw.isdigit():
@@ -409,12 +486,6 @@ async def process_admin_text(m: Message):
         pending.pop(uid,None)
         await m.answer(f"✅ Đã cập nhật giá sản phẩm #{pid}: {int(raw):,}đ.",reply_markup=admin_kb())
         return True
-    if task=="addproduct":
-        p=(m.text or "").split("|",3)
-        if len(p)!=4 or p[0].strip().upper() not in {"GAME","SHARE","SMS","PRX"} or not p[3].strip().isdigit():
-            await m.answer("Sai định dạng. Ví dụ: GAME|XX8|CODE 100K|50000"); return True
-        async with aiosqlite.connect(DB) as db: await db.execute("INSERT INTO products(category,game,name,price) VALUES(?,?,?,?)",(p[0].strip().upper(),p[1].strip().upper(),p[2].strip(),int(p[3]))); await db.commit()
-        pending.pop(uid,None); await m.answer("Đã thêm sản phẩm."); return True
     if task=="payment":
         p=(m.text or "").split("|")
         if len(p)!=4: await m.answer("Cần đủ 4 mục, phân cách bằng |."); return True
