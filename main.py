@@ -925,7 +925,19 @@ async def admin_balance_cancel(c: CallbackQuery):
     target = int(task.get("admin_balance_user_id", 0)) if isinstance(task, dict) else 0
     pending.pop(c.from_user.id, None)
     if target:
-        await admin_user_detail(c)
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT id,name,balance,blocked FROM users WHERE id=?", (target,))
+            row=await cur.fetchone()
+            cur=await db.execute("SELECT COUNT(*) FROM orders WHERE user_id=?", (target,))
+            order_count=(await cur.fetchone())[0]
+            cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM deposits WHERE user_id=? AND status='approved'", (target,))
+            dep_count,dep_sum=await cur.fetchone()
+        if row:
+            uid,name,balance,blocked=row
+            body=f"👤 THÀNH VIÊN\\nTên: {name or 'Chưa cập nhật'}\\nTelegram ID: {uid}\\nSố dư: {balance:,}đ\\nĐơn hàng: {order_count}\\nNạp đã duyệt: {dep_count} lượt / {dep_sum:,}đ\\nTrạng thái: {'ĐANG KHÓA' if blocked else 'HOẠT ĐỘNG'}"
+            await c.message.edit_text(body, reply_markup=admin_user_detail_kb(uid,blocked))
+        else:
+            await c.message.edit_text("Không tìm thấy thành viên.", reply_markup=kb([("🔎 TÌM THÀNH VIÊN", "am:balance"), ("⬅️ MENU QUẢN TRỊ", "a:refresh")]))
     else:
         await c.message.edit_text("➕➖ ĐIỀU CHỈNH SỐ DƯ", reply_markup=kb([("🔎 TÌM THÀNH VIÊN", "am:balance"), ("⬅️ MENU QUẢN TRỊ", "a:refresh")]))
     await c.answer("Đã hủy thao tác.")
