@@ -59,7 +59,7 @@ def admin_kb():
     for label, data in [
         ("➕ THÊM SẢN PHẨM","a:add"),("📦 QUẢN LÝ SẢN PHẨM","a:products"),
         ("💰 DUYỆT NẠP TIỀN","a:deposits"),("🧾 QUẢN LÝ ĐƠN HÀNG","a:orders"),
-        ("🏦 CÀI ĐẶT THANH TOÁN","a:payment"),("✏️ NỘI DUNG MINIGAME","a:minitext"),
+        ("🏦 CÀI ĐẶT THANH TOÁN","a:payment"),("📢 THÔNG BÁO THEO ID","a:notify"),("📣 THÔNG BÁO TẤT CẢ ID","a:notifyall"),("✏️ NỘI DUNG MINIGAME","a:minitext"),
         ("🔄 LÀM MỚI MENU","a:refresh"),("⬅️ MENU CHÍNH","m:home")
     ]:
         b.button(text=label, callback_data=data)
@@ -202,10 +202,55 @@ async def admin_actions(c: CallbackQuery):
     elif key=="payment":
         pending[c.from_user.id]="payment"
         await c.message.answer("🏦 CÀI ĐẶT THANH TOÁN\\nNhập: TÊN NGÂN HÀNG|SỐ TK|CHỦ TK|NỘI DUNG CHUYỂN KHOẢN")
+    elif key=="notify":
+        pending[c.from_user.id]={"notify_stage":"user_id"}
+        await c.message.answer("📢 THÔNG BÁO THEO ID\\nNhập Telegram ID người nhận:")
+    elif key=="notifyall":
+        pending[c.from_user.id]={"notify_stage":"all_message"}
+        await c.message.answer("📣 THÔNG BÁO TẤT CẢ ID ĐÃ /start BOT\\nNhập nội dung muốn gửi:")
     elif key=="minitext":
         pending[c.from_user.id]="minitext"
         await c.message.answer("✏️ NHẬP NỘI DUNG MINIGAME LIVE (chỉ thông tin/thể lệ).")
     await c.answer()
+
+@dp.callback_query(F.data.startswith("an:"))
+async def admin_notification_action(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    action=c.data.split(":")[1]
+    task=pending.get(c.from_user.id)
+    if not isinstance(task,dict):
+        return await c.answer("Phiên thông báo đã hết. Hãy thao tác lại.",show_alert=True)
+    if action=="cancel":
+        pending.pop(c.from_user.id,None)
+        await c.message.edit_text("Đã hủy gửi thông báo.",reply_markup=admin_kb())
+        return await c.answer()
+    if action=="send" and task.get("notify_stage")=="confirm":
+        try:
+            await c.bot.send_message(task["target_id"],task["body"])
+        except Exception as e:
+            pending.pop(c.from_user.id,None)
+            await c.message.edit_text(f"❌ Không gửi được đến ID {task['target_id']}. Có thể người nhận chưa từng mở bot hoặc đã chặn bot. Chi tiết: {str(e)[:180]}",reply_markup=admin_kb())
+            return await c.answer("Gửi thất bại.",show_alert=True)
+        pending.pop(c.from_user.id,None)
+        await c.message.edit_text(f"✅ Đã gửi thông báo thành công đến Telegram ID {task['target_id']}.",reply_markup=admin_kb())
+        return await c.answer("Đã gửi.")
+    if action=="sendall" and task.get("notify_stage")=="confirm_all":
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT id FROM users ORDER BY id")
+            recipients=[row[0] for row in await cur.fetchall()]
+        sent=0
+        failed=0
+        for target_id in recipients:
+            try:
+                await c.bot.send_message(target_id,task["body"])
+                sent+=1
+                await asyncio.sleep(0.05)
+            except Exception:
+                failed+=1
+        pending.pop(c.from_user.id,None)
+        await c.message.edit_text(f"📣 ĐÃ GỬI THÔNG BÁO TOÀN BOT\\nThành công: {sent}\\nKhông gửi được: {failed}\\nTổng tài khoản: {len(recipients)}",reply_markup=admin_kb())
+        return await c.answer("Đã hoàn tất gửi.")
+    return await c.answer("Thao tác không hợp lệ.",show_alert=True)
 
 @dp.callback_query(F.data.startswith("ap:"))
 async def admin_edit_price(c: CallbackQuery):
@@ -325,6 +370,34 @@ async def process_admin_text(m: Message):
     uid=m.from_user.id
     task=pending.get(uid)
     if uid not in ADMINS or not isinstance(task,str): return False
+    if isinstance(task,dict) and task.get("notify_stage")=="user_id":
+        raw=(m.text or "").strip()
+        if not raw.isdigit():
+            pending[uid]=task
+            await m.answer("Telegram ID không hợp lệ. Vui lòng nhập ID dạng số.")
+            return True
+        pending[uid]={"notify_stage":"message","target_id":int(raw)}
+        await m.answer(f"Đã chọn người nhận ID: {int(raw)}\\nBây giờ nhập nội dung thông báo:")
+        return True
+    if isinstance(task,dict) and task.get("notify_stage") in {"message","all_message"}:
+        body=(m.text or "").strip()
+        if not body:
+            pending[uid]=task
+            await m.answer("Nội dung không được để trống. Vui lòng nhập lại.")
+            return True
+        stage=task["notify_stage"]
+        pending[uid]={"notify_stage":"confirm_all" if stage=="all_message" else "confirm","target_id":task.get("target_id"),"body":body[:3500]}
+        if stage=="all_message":
+            async with aiosqlite.connect(DB) as db:
+                cur=await db.execute("SELECT COUNT(*) FROM users")
+                total=(await cur.fetchone())[0]
+            preview=f"📣 XÁC NHẬN GỬI THÔNG BÁO TOÀN BOT\\nSố tài khoản đã tham gia: {total}\\n\\n{body[:3500]}"
+            buttons=[("✅ XÁC NHẬN GỬI TẤT CẢ","an:sendall"),("❌ HỦY","an:cancel")]
+        else:
+            preview=f"📢 XÁC NHẬN THÔNG BÁO\\nNgười nhận ID: {task['target_id']}\\n\\n{body[:3500]}"
+            buttons=[("✅ XÁC NHẬN GỬI","an:send"),("❌ HỦY","an:cancel")]
+        await m.answer(preview,reply_markup=kb(buttons))
+        return True
     if isinstance(task,dict) and "admin_price_id" in task:
         raw=re.sub(r"[^0-9]","",m.text or "")
         if not raw or int(raw)<=0:
