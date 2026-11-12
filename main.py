@@ -346,6 +346,8 @@ async def minigame_item(c: CallbackQuery):
     game_name=c.data.split(":",1)[1]
     if game_name not in {"XX8","AD88","U888","88CLB"}:
         return await c.answer("Danh mục không hợp lệ.",show_alert=True)
+    if not await folder_is_on(f"mini_{game_name}"):
+        return await c.answer("Thư mục minigame này hiện đang tắt.",show_alert=True)
     await page_products(c.message,"MINIGAME LIVE",game_name)
     await c.answer()
 
@@ -421,6 +423,10 @@ async def admin_edit_folder_name(c: CallbackQuery):
     if c.from_user.id not in ADMINS:
         return await c.answer("Không có quyền.", show_alert=True)
     key = c.data.split(":",1)[1]
+    if key == "cancel":
+        pending.pop(c.from_user.id, None)
+        await c.message.answer("Đã hủy sửa tên thư mục.", reply_markup=await folders_kb())
+        return await c.answer("Đã hủy.")
     defs = {item[0]: item[1] for item in FOLDER_DEFS}
     if key not in defs:
         return await c.answer("Thư mục không hợp lệ.", show_alert=True)
