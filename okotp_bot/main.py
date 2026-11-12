@@ -303,6 +303,22 @@ async def set_result_group(m: Message):
         await db.commit()
     await m.answer("✅ Đã thiết lập nhóm nhận kết quả quét CODE này.")
 
+@dp.message(F.chat.type.in_({"group", "supergroup"}))
+async def auto_set_result_group(m: Message):
+    # Tự chọn nhóm kết quả khi Admin gửi tin nhắn đầu tiên trong nhóm.
+    if not m.from_user or not is_admin(m.from_user.id):
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute(
+            "SELECT value FROM bot_settings WHERE key='result_group_id'")).fetchone()
+        if row:
+            return
+        await db.execute(
+            "INSERT INTO bot_settings(key,value) VALUES('result_group_id',?) ON CONFLICT(key) DO NOTHING",
+            (str(m.chat.id),))
+        await db.commit()
+    await m.answer("✅ Nhóm này đã tự động được thiết lập để nhận kết quả quét CODE HI88. Bạn không cần gửi lệnh.")
+
 SOURCE_CHANNELS = {
     "hi88codemienphi88", "hi88tinmoi", "kenhquatanghi88",
     "hi88khogif", "hi88freecode2"
