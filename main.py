@@ -186,7 +186,7 @@ async def admin_actions(c: CallbackQuery):
     if key=="refresh":
         await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
     elif key=="add":
-        await c.message.edit_text("➕ THÊM SẢN PHẨM\\nBƯỚC 1/4 — Chọn danh mục:",reply_markup=kb([("🎮 GAME","apw:GAME"),("🔗 SHARE","apw:SHARE"),("📩 SMS","apw:SMS"),("🌐 PRX","apw:PRX"),("⬅️ MENU ADMIN","a:refresh")]))
+        await c.message.edit_text("➕ THÊM SẢN PHẨM\\nBƯỚC 1/4 — Chọn danh mục:",reply_markup=kb([("🎮 GAME","apw:GAME"),("🎯 MINIGAME LIVE","apw:MINIGAME LIVE"),("🔗 SHARE","apw:SHARE"),("📩 SMS","apw:SMS"),("🌐 PRX","apw:PRX"),("⬅️ MENU ADMIN","a:refresh")]))
     elif key=="products":
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT id,category,game,name,price,active FROM products ORDER BY id DESC LIMIT 30"); rows=await cur.fetchall()
@@ -220,7 +220,7 @@ async def admin_actions(c: CallbackQuery):
 async def add_product_category(c: CallbackQuery):
     if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
     category=c.data.split(":",1)[1]
-    if category not in {"GAME","SHARE","SMS","PRX"}: return await c.answer("Danh mục không hợp lệ.",show_alert=True)
+    if category not in {"GAME","MINIGAME LIVE","SHARE","SMS","PRX"}: return await c.answer("Danh mục không hợp lệ.",show_alert=True)
     if category=="GAME":
         await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb([(g,f"agw:{g}") for g in GAMES]+[("⬅️ Quay lại","a:add")]))
     else:
