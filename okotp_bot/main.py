@@ -185,7 +185,8 @@ async def service_keyboard(category, game=None):
     kb = InlineKeyboardBuilder()
     for sid, name, price in rows:
         callback = f"buy:{sid}:{game}" if category == "GAME" and game else f"buy:{sid}"
-        kb.button(text=f"{name} · {money(price)}", callback_data=callback)
+        button_label = f"🛒 MUA HÀNG · {name} · {money(price)}" if category == "GAME" else f"{name} · {money(price)}"
+        kb.button(text=button_label, callback_data=callback)
     kb.button(text="⬅️ Menu chính", callback_data="home")
     kb.adjust(1)
     return kb.as_markup(), rows
@@ -653,7 +654,7 @@ async def cb_game_services(c: CallbackQuery):
             reply_markup=back_kb("cat:GAME"))
     else:
         await c.message.edit_text(
-            f"🎮 <b>DỊCH VỤ {escape(game)}</b>\n\nChọn sản phẩm muốn mua.",
+            f"🎮 <b>SITE GAME: {escape(game)}</b>\n\nChọn nút <b>🛒 MUA HÀNG</b> tại sản phẩm cần đặt.\nSau đó nhập tên tài khoản và xác nhận mua.",
             reply_markup=kb)
     await c.answer()
 
