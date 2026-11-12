@@ -526,8 +526,15 @@ async def admin_balance_prompt(c: CallbackQuery):
     _,target,direction=c.data.split(":")
     if direction not in {"add","sub"}: return await c.answer("Thao tác không hợp lệ.",show_alert=True)
     pending[c.from_user.id]={"admin_balance_user_id":int(target),"direction":direction}
-    await c.message.answer(f"{'➕ CỘNG' if direction=='add' else '➖ TRỪ'} SỐ DƯ cho ID {target}\\nNhập số tiền VNĐ:",reply_markup=kb([("⬅️ HỦY","amu:"+target)]))
+    await c.message.answer(f"{'➕ CỘNG' if direction=='add' else '➖ TRỪ'} SỐ DƯ cho ID {target}\\nNhập số tiền VNĐ:",reply_markup=kb([("⬅️ HỦY","amcancel:"+target)]))
     await c.answer()
+
+@dp.callback_query(F.data.startswith("amcancel:"))
+async def admin_balance_cancel(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    pending.pop(c.from_user.id,None)
+    await admin_user_detail(c)
+    await c.answer("Đã hủy thao tác.")
 
 @dp.callback_query(F.data.startswith("amlock:"))
 async def admin_user_toggle_block(c: CallbackQuery):
