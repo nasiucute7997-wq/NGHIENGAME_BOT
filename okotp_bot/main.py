@@ -64,10 +64,18 @@ async def init_db():
             await db.execute("ALTER TABLE orders ADD COLUMN game TEXT NOT NULL DEFAULT ''")
         if "account_name" not in order_column_names:
             await db.execute("ALTER TABLE orders ADD COLUMN account_name TEXT NOT NULL DEFAULT ''")
+        for col, definition in [("room_id","INTEGER"),("paid","INTEGER NOT NULL DEFAULT 0"),("refunded_at","TEXT"),("provider_status","TEXT NOT NULL DEFAULT 'not_sent'")]:
+            if col not in order_column_names:
+                await db.execute(f"ALTER TABLE orders ADD COLUMN {col} {definition}")
         await db.execute("""CREATE TABLE IF NOT EXISTS purchase_drafts(
             user_id INTEGER PRIMARY KEY, service_id INTEGER NOT NULL,
             game TEXT NOT NULL, account_name TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL)""")
+        draft_columns = {row[1] for row in await (await db.execute("PRAGMA table_info(purchase_drafts)")).fetchall()}
+        if "kind" not in draft_columns:
+            await db.execute("ALTER TABLE purchase_drafts ADD COLUMN kind TEXT NOT NULL DEFAULT 'SERVICE'")
+        if "room_id" not in draft_columns:
+            await db.execute("ALTER TABLE purchase_drafts ADD COLUMN room_id INTEGER")
         await db.execute("""CREATE TABLE IF NOT EXISTS deposits(
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             amount INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
@@ -94,6 +102,9 @@ async def init_db():
             title TEXT NOT NULL, starts_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'open', result TEXT DEFAULT '',
             created_at TEXT NOT NULL)""")
+        room_columns = {row[1] for row in await (await db.execute("PRAGMA table_info(minigame_rooms)")).fetchall()}
+        if "price" not in room_columns:
+            await db.execute("ALTER TABLE minigame_rooms ADD COLUMN price INTEGER NOT NULL DEFAULT 0")
         await db.execute("""CREATE TABLE IF NOT EXISTS minigame_entries(
             id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL, created_at TEXT NOT NULL,
@@ -735,18 +746,18 @@ async def cb_room(c: CallbackQuery):
         return
     async with await db_connect() as db:
         room = await (await db.execute(
-            "SELECT brand,title,starts_at,status,result FROM minigame_rooms WHERE id=?", (rid,))).fetchone()
+            "SELECT brand,title,starts_at,status,result,price FROM minigame_rooms WHERE id=?", (rid,))).fetchone()
         count = await (await db.execute("SELECT COUNT(*) FROM minigame_entries WHERE room_id=?", (rid,))).fetchone()
     if not room:
         await c.answer("Không tìm thấy phòng.", show_alert=True)
         return
-    brand, title, starts, status, result = room
+    brand, title, starts, status, result, price = room
     kb = InlineKeyboardBuilder()
-    if status == "open":
-        kb.button(text="📝 Đăng ký tham gia", callback_data=f"join:{rid}")
+    if status == "open" and int(price or 0) > 0:
+        kb.button(text=f"📝 Đăng ký · {money(price)}", callback_data=f"join:{rid}")
     kb.button(text="⬅️ Danh sách Minigame", callback_data=f"mg:{brand}")
     kb.adjust(1)
-    body = f"🎯 <b>{escape(brand)} – {escape(title)}</b>\nThời gian: {escape(starts)}\nTrạng thái: <b>{escape(status)}</b>\nSố người đăng ký: <b>{count[0]}</b>"
+    body = f"🎯 <b>{escape(brand)} – {escape(title)}</b>\nThời gian: {escape(starts)}\nGiá tham gia: <b>{money(price)}</b>\nTrạng thái: <b>{escape(status)}</b>\nSố người đăng ký: <b>{count[0]}</b>"
     if result:
         body += f"\n\n🏁 <b>KẾT QUẢ</b>\n{escape(result)}"
     await c.message.edit_text(body, reply_markup=kb.as_markup())
@@ -755,24 +766,31 @@ async def cb_room(c: CallbackQuery):
 @dp.callback_query(F.data.startswith("join:"))
 async def cb_join(c: CallbackQuery):
     try:
-        rid = int(c.data.split(":", 1)[1])
+        rid=int(c.data.split(":",1)[1])
     except ValueError:
-        await c.answer("Mã phòng không hợp lệ.", show_alert=True)
-        return
+        await c.answer("Mã phòng không hợp lệ.",show_alert=True); return
+    await ensure_user(c.from_user)
     async with await db_connect() as db:
-        room = await (await db.execute("SELECT status FROM minigame_rooms WHERE id=?", (rid,))).fetchone()
-        if not room or room[0] != "open":
-            await c.answer("Phòng đã đóng đăng ký hoặc không tồn tại.", show_alert=True)
-            return
-        try:
-            await db.execute("INSERT INTO minigame_entries(room_id,user_id,created_at) VALUES(?,?,?)",
-                             (rid, c.from_user.id, now()))
-            await db.commit()
-        except sqlite3.IntegrityError:
-            await c.answer("Bạn đã đăng ký phòng này rồi.", show_alert=True)
-            return
-    await c.answer("Đăng ký thành công!", show_alert=True)
-    await c.message.edit_text("✅ Bạn đã đăng ký tham gia phòng. Hãy theo dõi trạng thái và kết quả tại phòng này.", reply_markup=back_kb("rooms"))
+        room=await (await db.execute("SELECT brand,title,status,price FROM minigame_rooms WHERE id=?",(rid,))).fetchone()
+        existing=await (await db.execute("SELECT id FROM minigame_entries WHERE room_id=? AND user_id=?",(rid,c.from_user.id))).fetchone()
+        if not room or room[2]!="open":
+            await c.answer("Phòng đã đóng đăng ký hoặc không tồn tại.",show_alert=True); return
+        if int(room[3] or 0)<=0:
+            await c.answer("Phòng chưa được Admin cài giá.",show_alert=True); return
+        if existing:
+            await c.answer("Bạn đã đăng ký phòng này rồi.",show_alert=True); return
+        await db.execute(
+            "INSERT INTO purchase_drafts(user_id,service_id,game,account_name,created_at,kind,room_id) VALUES(?,?,?,?,?,'MINIGAME',?) "
+            "ON CONFLICT(user_id) DO UPDATE SET service_id=0,game=excluded.game,account_name='',created_at=excluded.created_at,kind='MINIGAME',room_id=excluded.room_id",
+            (c.from_user.id,0,room[0],"",now(),rid))
+        await db.commit()
+    await c.message.edit_text(
+        f"🏆 <b>ĐĂNG KÝ MINIGAME {escape(room[0])}</b>\\nPhòng: <b>{escape(room[1])}</b>\\nGiá: <b>{money(room[3])}</b>\\n\\n"
+        "Nhập cú pháp <code>TÊN TK|4 SỐ CUỐI STK</code>. Ví dụ: <code>nghiencode123|6789</code>.\\n"
+        "Chỉ nhập 4 số cuối, không gửi số tài khoản đầy đủ, mật khẩu hoặc OTP.",
+        reply_markup=back_kb("buycancel"))
+    await c.answer()
+
 
 @dp.callback_query(F.data == "account")
 async def cb_account(c: CallbackQuery):
@@ -1132,21 +1150,25 @@ async def add_room(m: Message):
     if not is_admin(m.from_user.id):
         return
     parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
-    if len(parts) != 3 or parts[0].upper() not in set(BRANDS + ["HI88", "QQ88"]):
-        await m.answer("Cú pháp: <code>/addroom XX8|Tên phòng|2026-11-12 20:00</code>")
+    if len(parts) not in {3,4} or parts[0].upper() not in set(BRANDS + ["HI88", "QQ88"]):
+        await m.answer("Cú pháp: <code>/addroom XX8|Tên phòng|YYYY-MM-DD HH:MM|GIÁ</code>")
         return
     brand, title, starts = parts[0].upper(), parts[1], parts[2]
+    price = int(parts[3]) if len(parts)==4 and parts[3].isdigit() else 0
+    if len(parts)==4 and price<=0:
+        await m.answer("Giá phòng phải lớn hơn 0.")
+        return
     try:
         datetime.strptime(starts, "%Y-%m-%d %H:%M")
     except ValueError:
         await m.answer("Thời gian phải theo định dạng YYYY-MM-DD HH:MM.")
         return
     async with await db_connect() as db:
-        cur = await db.execute("INSERT INTO minigame_rooms(brand,title,starts_at,created_at) VALUES(?,?,?,?)",
-                               (brand, title, starts, now()))
+        cur = await db.execute("INSERT INTO minigame_rooms(brand,title,starts_at,price,created_at) VALUES(?,?,?,?,?)",
+                               (brand, title, starts, price, now()))
         rid = cur.lastrowid
         await db.commit()
-    await m.answer(f"✅ Đã tạo phòng Minigame #{rid}: <b>{escape(brand)} – {escape(title)}</b> · {escape(starts)}")
+    await m.answer(f"✅ Đã tạo phòng Minigame #{rid}: <b>{escape(brand)} – {escape(title)}</b> · {escape(starts)} · Giá: {money(price)}" + ("\\n⚠️ Chưa có giá, phòng chưa thể mở đăng ký." if price==0 else ""))
 
 @dp.message(Command("roomstatus"))
 async def room_status(m: Message):
