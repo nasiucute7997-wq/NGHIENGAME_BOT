@@ -76,7 +76,7 @@ async def folder_is_on(key):
         row = await cur.fetchone()
     return row is None or row[0] != "0"
 
-async def kb2(rows):
+def kb2(rows):
     b = InlineKeyboardBuilder()
     for label, data in rows: b.button(text=label, callback_data=data)
     b.adjust(2)
