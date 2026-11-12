@@ -113,6 +113,7 @@ async def home_kb(is_admin=False):
     for key, label, data in items:
         if await folder_is_on(key):
             b.button(text=label, callback_data=data)
+    b.button(text="🔄 LÀM MỚI MENU", callback_data="m:home")
     if is_admin:
         b.button(text="🛡 TRUNG TÂM QUẢN TRỊ", callback_data="m:admin")
     b.adjust(2)
@@ -233,7 +234,10 @@ async def page_products(message, category, game=""):
         rows=await cur.fetchall()
     back_to={"GAME":"m:codegame","MINIGAME LIVE":"m:mini","SHARE":"m:share","SMS":"m:services","PRX":"m:services"}.get(category,"m:home")
     if not rows:
-        await message.edit_text("Hiện chưa có sản phẩm được mở bán hoặc Admin chưa cấu hình giá.",reply_markup=kb([("⬅️ QUAY LẠI",back_to)])); return
+        extra = ""
+        if category == "MINIGAME LIVE":
+            extra = "\\n\\n" + await setting("minigame_text","Admin chưa cập nhật chi tiết/thể lệ cho minigame này.")
+        await message.edit_text("Hiện chưa có sản phẩm được mở bán hoặc Admin chưa cấu hình giá."+extra,reply_markup=kb([("⬅️ QUAY LẠI",back_to)])); return
     await message.edit_text("Chọn sản phẩm:",reply_markup=kb2([(f"{n} — {p:,}đ",f"buy:{i}") for i,n,p in rows]+[("⬅️ QUAY LẠI",back_to)]))
 
 @dp.message(CommandStart())
@@ -309,9 +313,11 @@ async def menus(c: CallbackQuery):
         await c.message.edit_text(text,reply_markup=kb([("🔄 LÀM MỚI","m:orders"),("⬅️ MENU CHÍNH","m:home")]))
     elif key=="contact":
         support=await setting("support_url","")
-        rows=[("⬅️ MENU CHÍNH","m:home")]
-        if support: rows.insert(0,("💬 CSKH", "url:"+support))
-        await c.message.edit_text("📞 LIÊN HỆ ADMIN\n\n"+("Bấm CSKH để liên hệ hỗ trợ." if support else "Vui lòng liên hệ Admin để được hỗ trợ."),reply_markup=kb(rows))
+        b=InlineKeyboardBuilder()
+        if support: b.button(text="💬 CSKH",url=support)
+        b.button(text="⬅️ MENU CHÍNH",callback_data="m:home")
+        b.adjust(1)
+        await c.message.edit_text("📞 LIÊN HỆ ADMIN\\n\\n"+("Bấm CSKH để liên hệ hỗ trợ." if support else "Vui lòng liên hệ Admin để được hỗ trợ."),reply_markup=b.as_markup())
     elif key=="houses":
         b=InlineKeyboardBuilder()
         b.button(text="👥 NHÓM GIAO LƯU 1",url="https://t.me/xomkeofreegame")
@@ -484,9 +490,20 @@ async def add_product_category(c: CallbackQuery):
     if category not in {"GAME","MINIGAME LIVE","SHARE","SMS","PRX"}: return await c.answer("Danh mục không hợp lệ.",show_alert=True)
     if category=="GAME":
         await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb2([(g,f"agw:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]+[("⬅️ Quay lại","a:add")]))
+    elif category=="MINIGAME LIVE":
+        await c.message.edit_text("BƯỚC 2/4 — Chọn minigame:",reply_markup=kb2([(g,f"amw:{g}") for g in ["XX8","AD88","U888","88CLB"]]+[("⬅️ QUAY LẠI","a:add")]))
     else:
         pending[c.from_user.id]={"add_stage":"name","category":category,"game":""}
         await c.message.edit_text(f"Danh mục: {category}\nBƯỚC 2/4 — Nhập tên sản phẩm/dịch vụ:",reply_markup=kb([("⬅️ QUAY LẠI CHỌN DANH MỤC","apback:category")]))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("amw:"))
+async def add_product_minigame(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    game_name=c.data.split(":",1)[1]
+    if game_name not in {"XX8","AD88","U888","88CLB"}: return await c.answer("Minigame không hợp lệ.",show_alert=True)
+    pending[c.from_user.id]={"add_stage":"name","category":"MINIGAME LIVE","game":game_name}
+    await c.message.edit_text(f"Danh mục: MINIGAME LIVE\\nMinigame: {game_name}\\nNhập tên sản phẩm:",reply_markup=kb([("⬅️ QUAY LẠI CHỌN MINIGAME","a:add")]))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("agw:"))
