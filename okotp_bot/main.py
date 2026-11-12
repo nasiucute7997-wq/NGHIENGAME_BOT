@@ -1181,6 +1181,20 @@ async def add_room(m: Message):
         await db.commit()
     await m.answer(f"✅ Đã tạo phòng Minigame #{rid}: <b>{escape(brand)} – {escape(title)}</b> · {escape(starts)} · Giá: {money(price)}" + ("\\n⚠️ Chưa có giá, phòng chưa thể mở đăng ký." if price==0 else ""))
 
+@dp.message(Command("roomprice"))
+async def set_room_price(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts=[p.strip() for p in (m.text or "").partition(" ")[2].split("|")]
+    if len(parts)!=2 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[1])<=0:
+        await m.answer("Cú pháp: <code>/roomprice ID|GIÁ</code>")
+        return
+    async with await db_connect() as db:
+        cur=await db.execute("UPDATE minigame_rooms SET price=? WHERE id=?",(int(parts[1]),int(parts[0])))
+        await db.commit()
+    await m.answer("✅ Đã cập nhật giá phòng." if cur.rowcount else "Không tìm thấy phòng.")
+
+
 @dp.message(Command("roomstatus"))
 async def room_status(m: Message):
     if not is_admin(m.from_user.id):
@@ -1306,7 +1320,7 @@ async def admin_cmd(m: Message):
     if not is_admin(m.from_user.id):
         await m.answer("Bạn không có quyền.")
         return
-    await m.answer("🛠 <b>LỆNH ADMIN</b>\n/addservice GAME|SITE|Tên|Giá\n/addservice SMS|Tên|Giá\n/addservice PRX|Tên|Giá\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM\n/roomstatus ID|open\n/result ID|Kết quả\n/roomsadmin\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats")
+    await m.answer("🛠 <b>LỆNH ADMIN</b>\n/addservice GAME|SITE|Tên|Giá\n/addservice SMS|Tên|Giá\n/addservice PRX|Tên|Giá\n/addroom BRAND|Tên phòng|YYYY-MM-DD HH:MM|GIÁ\n/roomprice ID|GIÁ\n/roomstatus ID|open\n/result ID|Kết quả\n/roomsadmin\n/orderstatus ID|provider_review hoặc completed\n/refund ID\n/duyetnap ID\n/huy nap ID\n/setbalance USER_ID SỐ_TIỀN\n/stats")
 
 async def main():
     await init_db()
