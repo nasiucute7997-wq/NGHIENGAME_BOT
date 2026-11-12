@@ -63,6 +63,11 @@ async def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             alias TEXT NOT NULL, game TEXT NOT NULL, account_ref TEXT NOT NULL,
             created_at TEXT NOT NULL, UNIQUE(user_id,alias))""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS source_codes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE,
+            source_username TEXT NOT NULL, source_chat_id INTEGER NOT NULL,
+            source_message_id INTEGER NOT NULL, message_link TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL)""")
         await db.execute("""CREATE TABLE IF NOT EXISTS captured_codes(
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             account_id INTEGER NOT NULL, game TEXT NOT NULL, code TEXT NOT NULL,
@@ -105,6 +110,7 @@ def home_kb(uid):
         ("📖 Hướng dẫn", "guide"),
         ("🎟 QUÉT & LƯU CODE", "codes_help"),
         ("🎟 Mã đã lưu", "mycodes"),
+        ("📡 CODE HI88 mới", "sourcecodes"),
         ("☎️ Liên hệ Admin", "support"),
     ]:
         kb.button(text=label, callback_data=data)
@@ -277,6 +283,131 @@ async def save_captured_code(c: CallbackQuery):
             await c.answer("Mã này đã được lưu rồi.", show_alert=True)
             return
     await c.message.edit_text(f"✅ Đã lưu mã #{code_id} vào tài khoản.\nGame: <b>{escape(account[0])}</b>\nMã: <code>{escape(code)}</code>\nTrạng thái: <b>Đã lưu – chờ bạn tự đổi thưởng</b>.")
+    await c.answer("Đã lưu mã.")
+
+
+SOURCE_CHANNELS = {
+    "hi88codemienphi88", "hi88tinmoi", "kenhquatanghi88",
+    "hi88khogif", "hi88freecode2"
+}
+
+@dp.channel_post()
+async def watch_hi88_sources(m: Message):
+    username = (m.chat.username or "").lower()
+    if username not in SOURCE_CHANNELS:
+        return
+    body = m.text or m.caption or ""
+    code = extract_code(body)
+    if not code:
+        return
+    link = f"https://t.me/{username}/{m.message_id}"
+    async with await db_connect() as db:
+        try:
+            await db.execute(
+                "INSERT INTO source_codes(code,source_username,source_chat_id,source_message_id,message_link,created_at) VALUES(?,?,?,?,?,?)",
+                (code, username, m.chat.id, m.message_id, link, now()))
+            await db.commit()
+        except sqlite3.IntegrityError:
+            return
+    for admin_id in ADMIN_IDS:
+        try:
+            await m.bot.send_message(admin_id,
+                f"🎯 <b>PHÁT HIỆN CODE HI88 MỚI</b>\\nNguồn: @{escape(username)}\\nMã: <code>{escape(code)}</code>\\n<a href=\"{link}\">Mở bài đăng gốc</a>\\nDùng /sourcecodes để xem kho mã.")
+        except Exception:
+            logging.exception("Could not notify admin about captured source code")
+
+@dp.message(Command("sourcecodes"))
+async def list_source_codes(m: Message):
+    await ensure_user(m.from_user)
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,code,source_username,message_link,created_at FROM source_codes ORDER BY id DESC LIMIT 20")).fetchall()
+    if not rows:
+        await m.answer("Chưa phát hiện mã mới. Kiểm tra bot đã được thêm vào các kênh nguồn chưa.")
+        return
+    lines = ["🎟 <b>KHO CODE HI88 TỰ QUÉT</b>"]
+    kb = InlineKeyboardBuilder()
+    for cid, code, source, link, created in rows:
+        lines.append(f"#{cid} · <code>{escape(code)}</code> · @{escape(source)}")
+        kb.button(text=f"#{cid} · {code}", callback_data=f"srcpick:{cid}")
+    kb.adjust(1)
+    await m.answer("\\n".join(lines), reply_markup=kb.as_markup())
+
+@dp.callback_query(F.data.startswith("srcpick:"))
+async def pick_source_code(c: CallbackQuery):
+    try:
+        code_id = int(c.data.split(":", 1)[1])
+    except (ValueError, AttributeError):
+        await c.answer("Mã không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT code,source_username,message_link FROM source_codes WHERE id=?", (code_id,))).fetchone()
+        accounts = await (await db.execute("SELECT id,alias,game,account_ref FROM saved_accounts WHERE user_id=? ORDER BY id", (c.from_user.id,))).fetchall()
+    if not row:
+        await c.answer("Không tìm thấy mã.", show_alert=True)
+        return
+    if not accounts:
+        await c.answer("Bạn cần lưu tài khoản trước bằng /addaccount.", show_alert=True)
+        return
+    code, source, link = row
+    kb = InlineKeyboardBuilder()
+    for aid, alias, game, account_ref in accounts:
+        kb.button(text=f"{alias} · {game}", callback_data=f"srcacct:{code_id}:{aid}")
+    kb.adjust(1)
+    await c.message.answer(
+        f"🔎 Mã: <code>{escape(code)}</code>\\nNguồn: @{escape(source)}\\nChọn tài khoản để gắn mã.",
+        reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("srcacct:"))
+async def confirm_source_code(c: CallbackQuery):
+    try:
+        _, code_id_text, aid_text = c.data.split(":")
+        code_id, aid = int(code_id_text), int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        code_row = await (await db.execute("SELECT code,source_username,source_chat_id,source_message_id FROM source_codes WHERE id=?", (code_id,))).fetchone()
+        account = await (await db.execute("SELECT alias,game,account_ref FROM saved_accounts WHERE id=? AND user_id=?", (aid,c.from_user.id))).fetchone()
+    if not code_row or not account:
+        await c.answer("Không tìm thấy mã hoặc tài khoản.", show_alert=True)
+        return
+    code, source, chat_id, msg_id = code_row
+    alias, game, account_ref = account
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Xác nhận lưu mã", callback_data=f"srcsave:{code_id}:{aid}")
+    kb.button(text="❌ Hủy", callback_data="home")
+    kb.adjust(1)
+    await c.message.answer(
+        f"🔐 <b>XÁC NHẬN LƯU CODE</b>\\nMã: <code>{escape(code)}</code>\\nNguồn: @{escape(source)}\\nGame: <b>{escape(game)}</b>\\nTài khoản: <b>{escape(alias)}</b> (<code>{escape(account_ref)}</code>)",
+        reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("srcsave:"))
+async def save_source_code(c: CallbackQuery):
+    try:
+        _, code_id_text, aid_text = c.data.split(":")
+        code_id, aid = int(code_id_text), int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        row = await (await db.execute("SELECT code,source_chat_id,source_message_id FROM source_codes WHERE id=?", (code_id,))).fetchone()
+        account = await (await db.execute("SELECT game FROM saved_accounts WHERE id=? AND user_id=?", (aid,c.from_user.id))).fetchone()
+        if not row or not account:
+            await c.answer("Không tìm thấy mã hoặc tài khoản.", show_alert=True)
+            return
+        code, chat_id, msg_id = row
+        try:
+            await db.execute(
+                "INSERT INTO captured_codes(user_id,account_id,game,code,source_chat_id,source_message_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                (c.from_user.id,aid,account[0],code,chat_id,msg_id,now()))
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await c.answer("Mã này đã được lưu vào tài khoản trước đó.", show_alert=True)
+            return
+    await c.message.edit_text(f"✅ Đã lưu mã <code>{escape(code)}</code> vào tài khoản.\\nGame: <b>{escape(account[0])}</b>\\nTrạng thái: Đã lưu, chờ bạn tự đổi thưởng.")
     await c.answer("Đã lưu mã.")
 
 @dp.message(Command("mycodes"))
@@ -492,6 +623,11 @@ async def cb_orders(c: CallbackQuery):
 async def cb_codes_help(c: CallbackQuery):
     await c.message.edit_text("🎟 <b>QUÉT MÃ TỪ TELEGRAM</b>\n1. Lưu tài khoản: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\n2. Reply tin nhắn Telegram có mã rồi gửi <code>/scan</code>.\n3. Chọn tài khoản và xác nhận lưu.\n4. Xem mã bằng <code>/mycodes</code>.\n\nBot chỉ lưu mã và gắn vào tài khoản bạn chọn; không tự đăng nhập hoặc tự đổi thưởng.", reply_markup=back_kb())
     await c.answer()
+
+@dp.callback_query(F.data == "sourcecodes")
+async def cb_source_codes(c: CallbackQuery):
+    await c.answer()
+    await list_source_codes(c.message)
 
 @dp.callback_query(F.data == "mycodes")
 async def cb_my_codes(c: CallbackQuery):
