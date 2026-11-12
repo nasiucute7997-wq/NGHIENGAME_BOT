@@ -54,7 +54,7 @@ async def init_db():
 def kb(rows):
     b = InlineKeyboardBuilder()
     for label, data in rows: b.button(text=label, callback_data=data)
-    b.adjust(1)
+    b.adjust(2)
     return b.as_markup()
 
 
@@ -205,7 +205,7 @@ def admin_users_kb(rows):
         b.button(text=label, callback_data=f"amu:{uid}")
     b.button(text="🔎 TÌM THÀNH VIÊN KHÁC", callback_data="am:users")
     b.button(text="⬅️ MENU QUẢN TRỊ", callback_data="a:refresh")
-    b.adjust(1)
+    b.adjust(2)
     return b.as_markup()
 
 def admin_user_detail_kb(uid, blocked):
@@ -242,7 +242,7 @@ async def setting(key, default=""):
 
 async def page_products(message, category, game=""):
     async with aiosqlite.connect(DB) as db:
-        cur=await db.execute("SELECT id,name,price FROM products WHERE active=1 AND category=? AND (game=? OR game='') ORDER BY id",(category,game))
+        cur=await db.execute("SELECT id,name,price,description FROM products WHERE active=1 AND category=? AND (game=? OR game='') ORDER BY id",(category,game))
         rows=await cur.fetchall()
     back_to={"GAME":"m:codegame","MINIGAME LIVE":"m:mini","SHARE":"m:share","SMS":"m:services","PRX":"m:services"}.get(category,"m:home")
     if not rows:
@@ -250,7 +250,9 @@ async def page_products(message, category, game=""):
         if category == "MINIGAME LIVE":
             extra = "\\n\\n" + await setting("minigame_text","Admin chưa cập nhật chi tiết/thể lệ cho minigame này.")
         await message.edit_text("Hiện chưa có sản phẩm được mở bán hoặc Admin chưa cấu hình giá."+extra,reply_markup=kb([("⬅️ QUAY LẠI",back_to)])); return
-    await message.edit_text("Chọn sản phẩm:",reply_markup=kb2([(f"{n} — {p:,}đ",f"buy:{i}") for i,n,p in rows]+[("⬅️ QUAY LẠI",back_to)]))
+    details = "\\n".join([f"• {name}: {desc}" for _,name,price,desc in rows if desc])
+    body = "Chọn sản phẩm:" + (f"\\n\\n{details}" if details else "")
+    await message.edit_text(body,reply_markup=kb2([(f"{n} — {p:,}đ",f"buy:{i}") for i,n,p,desc in rows]+[("⬅️ QUAY LẠI",back_to)]))
 
 @dp.message(CommandStart())
 async def start(m: Message):
@@ -356,13 +358,15 @@ async def share_item(c: CallbackQuery):
     if not await folder_is_on(f"share_{site}"):
         return await c.answer("Thư mục CODE SHARE này hiện đang tắt.",show_alert=True)
     async with aiosqlite.connect(DB) as db:
-        cur=await db.execute("SELECT id,name,price FROM products WHERE active=1 AND category='SHARE' AND (name LIKE ? OR game=?) ORDER BY id",(f"%{site}%",site))
+        cur=await db.execute("SELECT id,name,price,description FROM products WHERE active=1 AND category='SHARE' AND (name LIKE ? OR game=?) ORDER BY id",(f"%{site}%",site))
         rows=await cur.fetchall()
     back_to="m:share"
     if not rows:
         await c.message.edit_text("Hiện chưa có sản phẩm đang mở bán cho "+site+".",reply_markup=kb2([("⬅️ QUAY LẠI",back_to)]))
     else:
-        await c.message.edit_text("Chọn sản phẩm "+site+":",reply_markup=kb2([(f"{name} — {price:,}đ",f"buy:{pid}") for pid,name,price in rows]+[("⬅️ QUAY LẠI",back_to)]))
+        details = "\\n".join([f"• {name}: {desc}" for _,name,price,desc in rows if desc])
+        body = "Chọn sản phẩm "+site+":" + (f"\\n\\n{details}" if details else "")
+        await c.message.edit_text(body,reply_markup=kb2([(f"{name} — {price:,}đ",f"buy:{pid}") for pid,name,price,desc in rows]+[("⬅️ QUAY LẠI",back_to)]))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("miniitem:"))
@@ -459,9 +463,13 @@ async def folder_config_products(key):
 
 async def folder_config_kb(key):
     b = InlineKeyboardBuilder()
-    b.button(text="🎮 SITE GAME", callback_data=f"cfgsite:{key}")
-    b.button(text="📝 NỘI DUNG", callback_data=f"cfgfield:description:{key}")
-    b.button(text="💵 GIÁ", callback_data=f"cfgfield:price:{key}")
+    category, game = await folder_config_products(key)
+    if category:
+        b.button(text="🎮 SITE GAME", callback_data=f"cfgsite:{key}")
+        b.button(text="📝 NỘI DUNG", callback_data=f"cfgfield:description:{key}")
+        b.button(text="💵 GIÁ", callback_data=f"cfgfield:price:{key}")
+    else:
+        b.button(text="✏️ ĐỔI TÊN HIỂN THỊ", callback_data=f"cfgsite:{key}")
     b.button(text="⬅️ QUAY LẠI DANH SÁCH", callback_data="a:folders")
     b.adjust(2)
     return b.as_markup()
@@ -549,7 +557,11 @@ async def admin_config_product_select(c: CallbackQuery):
     if not row:
         return await c.answer("Không tìm thấy sản phẩm.", show_alert=True)
     pending[c.from_user.id] = {"admin_product_field": field, "product_id": pid, "config_return": key}
-    prompt = f"Nhập {'nội dung mới' if field == 'description' else 'giá mới bằng VNĐ'} cho {row[0]}\\nHiện tại: {row[1] if field == 'description' else f'{row[2]:,}đ'}\\n\\nGửi dấu - để xóa nội dung." if field == "description" else f"Nhập giá mới cho {row[0]}\\nHiện tại: {row[2]:,}đ"
+    if field == "description":
+        current_value = row[1] or "Chưa có"
+        prompt = f"📝 NHẬP NỘI DUNG MỚI CHO {row[0]}\\nHiện tại: {current_value}\\n\\nGửi dấu - nếu muốn xóa nội dung."
+    else:
+        prompt = f"💵 NHẬP GIÁ MỚI CHO {row[0]}\\nHiện tại: {row[2]:,}đ\\n\\nNhập số tiền VNĐ."
     await c.message.edit_text(prompt, reply_markup=kb([("⬅️ QUAY LẠI CHỌN SẢN PHẨM", f"cfgfield:{field}:{key}"), ("⬅️ CÀI ĐẶT THƯ MỤC", f"cfgback:{key}")]))
     await c.answer()
 
