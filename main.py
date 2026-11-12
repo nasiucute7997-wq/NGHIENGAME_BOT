@@ -77,6 +77,8 @@ FOLDER_DEFS = [
     ("mini_AD88", "🎯 MINIGAME AD88", "Chi tiết Minigame"),
     ("mini_U888", "🎯 MINIGAME U888", "Chi tiết Minigame"),
     ("mini_88CLB", "🎯 MINIGAME 88CLB", "Chi tiết Minigame"),
+    ("share_QQ88", "🔗 CODE SHARE QQ88", "Chi tiết CODE SHARE"),
+    ("share_HI88", "🔗 CODE SHARE HI88", "Chi tiết CODE SHARE"),
     ("admin_add", "➕ THÊM SẢN PHẨM", "Thư mục quản trị"),
     ("admin_products", "📦 QUẢN LÝ SẢN PHẨM", "Thư mục quản trị"),
     ("admin_deposits", "💰 DUYỆT NẠP TIỀN", "Thư mục quản trị"),
@@ -143,8 +145,8 @@ async def admin_kb():
     for key, label, data in items:
         if await folder_is_on(key):
             b.button(text=label, callback_data=data)
-    b.button(text="✏️ SỬA TÊN TỪNG THƯ MỤC", callback_data="a:folders")
-    b.button(text="⚙️ BẬT/TẮT TẤT CẢ THƯ MỤC", callback_data="a:folders")
+    b.button(text="⚙️ QUẢN LÝ THƯ MỤC / SỬA TÊN", callback_data="a:folders")
+    b.button(text="🔄 LÀM MỚI MENU", callback_data="a:refresh")
     b.button(text="🔄 LÀM MỚI MENU", callback_data="a:refresh")
     b.button(text="⬅️ MENU CHÍNH", callback_data="m:home")
     b.adjust(2)
@@ -159,7 +161,7 @@ async def folders_kb():
         b.button(text=f"✏️ SỬA TÊN | {shown}"[:64], callback_data=f"afe:{key}")
     b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
     b.button(text="⬅️ MENU ADMIN", callback_data="a:refresh")
-    b.adjust(1)
+    b.adjust(2)
     return b.as_markup()
 
 def admin_products_kb(rows):
@@ -298,7 +300,13 @@ async def menus(c: CallbackQuery):
         rows.append(("⬅️ QUAY LẠI","m:code"))
         await c.message.edit_text((await folder_label("home_mini","🎯 MINIGAME LIVE"))+"\n\nChọn minigame:",reply_markup=kb2(rows))
     elif key=="share":
-        await page_products(c.message,"SHARE")
+        share_rows=[]
+        if await folder_is_on("share_QQ88"):
+            share_rows.append((await folder_label("share_QQ88","🔗 CODE SHARE QQ88"),"shareitem:QQ88"))
+        if await folder_is_on("share_HI88"):
+            share_rows.append((await folder_label("share_HI88","🔗 CODE SHARE HI88"),"shareitem:HI88"))
+        share_rows.append(("⬅️ QUAY LẠI","m:code"))
+        await c.message.edit_text((await folder_label("home_share","🔗 CODE SHARE"))+"\\n\\nChọn thư mục:",reply_markup=kb2(share_rows))
     elif key=="services":
         rows=[(await folder_label(folder,label),data) for folder,label,data in [("service_sms_receive","📩 SMS NHẬN","cat:SMS"),("service_sms_send","📤 SMS GỬI","cat:SMS"),("service_proxy","🌐 PROXY / PRX","cat:PRX")] if await folder_is_on(folder)]
         rows.append(("⬅️ QUAY LẠI","m:home"))
@@ -339,6 +347,23 @@ async def menus(c: CallbackQuery):
         b.button(text="⬅️ MENU CHÍNH",callback_data="m:home")
         b.adjust(2,2,1)
         await c.message.edit_text("🏦 HỆ THỐNG NHÀ CÁI\n\nCác liên kết cộng đồng:",reply_markup=b.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("shareitem:"))
+async def share_item(c: CallbackQuery):
+    site = c.data.split(":",1)[1]
+    if site not in {"QQ88","HI88"}:
+        return await c.answer("Thư mục không hợp lệ.",show_alert=True)
+    if not await folder_is_on(f"share_{site}"):
+        return await c.answer("Thư mục CODE SHARE này hiện đang tắt.",show_alert=True)
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT id,name,price FROM products WHERE active=1 AND category='SHARE' AND (name LIKE ? OR game=?) ORDER BY id",(f"%{site}%",site))
+        rows=await cur.fetchall()
+    back_to="m:share"
+    if not rows:
+        await c.message.edit_text("Hiện chưa có sản phẩm đang mở bán cho "+site+".",reply_markup=kb2([("⬅️ QUAY LẠI",back_to)]))
+    else:
+        await c.message.edit_text("Chọn sản phẩm "+site+":",reply_markup=kb2([(f"{name} — {price:,}đ",f"buy:{pid}") for pid,name,price in rows]+[("⬅️ QUAY LẠI",back_to)]))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("miniitem:"))
