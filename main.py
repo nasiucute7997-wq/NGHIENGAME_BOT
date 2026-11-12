@@ -285,7 +285,18 @@ async def start(m: Message):
             cur=await db.execute("SELECT blocked FROM users WHERE id=?",(m.from_user.id,)); blocked=(await cur.fetchone())[0]
         if blocked:
             return await m.answer("🚫 Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Admin.")
-    await m.answer(f"━━━━━━━━━━━━━━━━━━━\n🌟🎉 XIN CHÀO, {m.from_user.full_name}! 🎉🌟\n\n💎 CHÀO MỪNG BẠN ĐẾN VỚI NGHIỆN CODE 💎\n🎮 CODE GAME HOT – MINIGAME LIVE\n⚡ GIAO DỊCH NHANH – THAO TÁC TIỆN LỢI\n🤖 HỆ THỐNG TỰ ĐỘNG – HỖ TRỢ 24/7\n\n━━━━━━━━━━━━━━━━━━━━\n🚀 BẠN MUỐN SỬ DỤNG DỊCH VỤ NÀO? 👇👇\n🎯 VUI LÒNG CHỌN DANH MỤC BÊN DƯỚI ĐỂ BẮT ĐẦU! 💖\n\n━━━━━━━━━━━━━━━━━━━",reply_markup=await home_kb(m.from_user.id in ADMINS))
+    welcome = (f"╔══════════════════════════════════╗\\n"
+               f"🌟🎉 XIN CHÀO, {m.from_user.full_name}! 🎉🌟\\n"
+               "╠══════════════════════════════════╣\\n"
+               "💎 CHÀO MỪNG BẠN ĐẾN VỚI NGHIỆN CODE 💎\\n"
+               "🎮 CODE GAME HOT – MINIGAME LIVE\\n"
+               "⚡ GIAO DỊCH NHANH – THAO TÁC TIỆN LỢI\\n"
+               "🤖 HỆ THỐNG TỰ ĐỘNG – HỖ TRỢ 24/7\\n"
+               "╠══════════════════════════════════╣\\n"
+               "🚀 BẠN MUỐN SỬ DỤNG DỊCH VỤ NÀO? 👇👇👇\\n"
+               "🎯 VUI LÒNG CHỌN DANH MỤC BÊN DƯỚI ĐỂ BẮT ĐẦU! 💖\\n"
+               "╚══════════════════════════════════╝")
+    await m.answer(welcome,reply_markup=await home_kb(m.from_user.id in ADMINS))
 
 @dp.message(Command("admin"))
 async def admin(m: Message):
