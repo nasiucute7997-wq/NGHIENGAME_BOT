@@ -1192,8 +1192,9 @@ async def add_service(m: Message):
     category = parts[0].upper()
     if category in {"GAME", "MINIGAME"} and len(parts) == 4:
         game, name, price_text = parts[1].upper(), parts[2], parts[3]
-        if game not in GAME_SITES:
-            await m.answer("Tên game không hợp lệ. Hãy dùng site có trong danh sách bot.")
+        allowed_games = GAME_SITES if category == "GAME" else sorted(set(BRANDS + ["HI88", "QQ88"]))
+        if game not in allowed_games:
+            await m.answer("Tên game không hợp lệ. Hãy dùng đúng thương hiệu trong danh sách bot.")
             return
     elif len(parts) == 3:
         game, name, price_text = "", parts[1], parts[2]
