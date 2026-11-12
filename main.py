@@ -557,7 +557,12 @@ async def admin_order_set_status(c: CallbackQuery):
         await c.bot.send_message(row[0],f"📦 Đơn hàng #{oid} đã cập nhật trạng thái: {parts[2]}.")
     except Exception: pass
     await c.answer("Đã cập nhật trạng thái đơn.")
-    await admin_order_detail(c,oid)
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT user_id,product_name,account,price,status,created_at FROM orders WHERE id=?",(oid,)); detail=await cur.fetchone()
+    u,name,account,price,status,created=detail
+    body=f"🧾 CHI TIẾT ĐƠN #{oid}\\nUser: {u}\\nSản phẩm: {name}\\nTài khoản: {account or '-'}\\nGiá: {price:,}đ\\nTrạng thái: {status}\\nTạo lúc: {created}"
+    buttons=[("⏳ ĐANG XỬ LÝ",f"aost:{oid}:processing"),("✅ HOÀN THÀNH",f"aost:{oid}:completed"),("❌ ĐÃ HỦY",f"aost:{oid}:cancelled"),("⬅️ DANH SÁCH ĐƠN","a:orders")]
+    await c.message.edit_text(body,reply_markup=kb(buttons))
 
 @dp.callback_query(F.data.startswith("ap:"))
 async def admin_edit_price(c: CallbackQuery):
