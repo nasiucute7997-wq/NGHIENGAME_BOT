@@ -68,6 +68,12 @@ async def folder_is_on(key):
         row = await cur.fetchone()
     return row is None or row[0] != "0"
 
+async def kb2(rows):
+    b = InlineKeyboardBuilder()
+    for label, data in rows: b.button(text=label, callback_data=data)
+    b.adjust(2)
+    return b.as_markup()
+
 async def home_kb(is_admin=False):
     b = InlineKeyboardBuilder()
     items = [
@@ -174,7 +180,7 @@ async def menus(c: CallbackQuery):
         if not await folder_is_on(folder_key):
             return await c.answer("Thư mục này hiện đang tắt.", show_alert=True)
     if key=="code":
-        await c.message.edit_text("Chọn game CODE GAME:",reply_markup=kb([(g,f"game:{g}") for g in GAMES]+[("⬅️ Menu","m:home")]))
+        await c.message.edit_text("Chọn game CODE GAME:",reply_markup=kb2([(g,f"game:{g}") for g in GAMES]+[("⬅️ Menu","m:home")]))
     elif key=="share":
         await page_products(c.message,"SHARE")
     elif key=="services":
@@ -288,7 +294,7 @@ async def add_product_category(c: CallbackQuery):
     category=c.data.split(":",1)[1]
     if category not in {"GAME","MINIGAME LIVE","SHARE","SMS","PRX"}: return await c.answer("Danh mục không hợp lệ.",show_alert=True)
     if category=="GAME":
-        await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb([(g,f"agw:{g}") for g in GAMES]+[("⬅️ Quay lại","a:add")]))
+        await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb2([(g,f"agw:{g}") for g in GAMES]+[("⬅️ Quay lại","a:add")]))
     else:
         pending[c.from_user.id]={"add_stage":"name","category":category,"game":""}
         await c.message.edit_text(f"Danh mục: {category}\nBƯỚC 2/4 — Nhập tên sản phẩm/dịch vụ:")
