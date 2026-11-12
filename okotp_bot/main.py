@@ -100,25 +100,57 @@ async def get_balance(uid):
         row = await (await db.execute("SELECT balance FROM users WHERE user_id=?", (uid,))).fetchone()
         return int(row[0]) if row else 0
 
+GAME_SITES = ["HI88", "NEW88", "XX8", "AD88", "U888", "ABC8", "MM88", "F168", "ON68", "GK88", "78WIN", "SHBET"]
+
 def home_kb(uid):
     kb = InlineKeyboardBuilder()
     for label, data in [
-        ("🎮 CODE GAME", "cat:GAME"),
-        ("🏆 MINIGAME LIVE", "minigames"),
-        ("🧩 DỊCH VỤ KHÁC", "other_services"),
-        ("👤 Tài khoản", "account"),
-        ("💳 Nạp tiền", "deposit"),
-        ("📦 Lịch sử đơn", "orders"),
-        ("📖 Hướng dẫn", "guide"),
-        ("🎟 QUÉT & LƯU CODE", "codes_help"),
-        ("🎟 Mã đã lưu", "mycodes"),
-        ("📡 CODE HI88 mới", "sourcecodes"),
-        ("☎️ Liên hệ Admin", "support"),
+        ("🎮  CHỌN SITE GAME", "sites"),
+        ("🏆  MINIGAME LIVE", "minigames"),
+        ("🧩  DỊCH VỤ KHÁC", "other_services"),
+        ("👤  TÀI KHOẢN CỦA TÔI", "account"),
+        ("💳  NẠP TIỀN", "deposit"),
+        ("📦  LỊCH SỬ ĐƠN HÀNG", "orders"),
+        ("📖  HƯỚNG DẪN SỬ DỤNG", "guide"),
+        ("☎️  LIÊN HỆ HỖ TRỢ", "support"),
     ]:
         kb.button(text=label, callback_data=data)
     if is_admin(uid):
-        kb.button(text="🛠 ADMIN PANEL", callback_data="admin")
-    kb.adjust(2, 1, 2, 2, 1, 1)
+        kb.button(text="🛠  TRANG QUẢN TRỊ", callback_data="admin")
+    kb.adjust(1, 2, 2, 2, 1, 1)
+    return kb.as_markup()
+
+def sites_kb():
+    kb = InlineKeyboardBuilder()
+    for site in GAME_SITES:
+        kb.button(text=f"🎮 {site}", callback_data=f"site:{site}")
+    kb.button(text="⬅️ MENU CHÍNH", callback_data="home")
+    kb.adjust(2)
+    return kb.as_markup()
+
+async def site_detail_text(uid, site):
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,alias,account_ref FROM saved_accounts WHERE user_id=? AND upper(game)=? ORDER BY id DESC",
+            (uid, site))).fetchall()
+    lines = [f"🎮 <b>QUẢN LÝ SITE {escape(site)}</b>", "",
+             "Tài khoản đăng nhập được quản lý riêng theo từng site.",
+             "Chỉ lưu tên đăng nhập/tên tài khoản; không gửi mật khẩu hoặc OTP.", ""]
+    if rows:
+        lines.append("👤 <b>TÀI KHOẢN ĐÃ LƯU</b>")
+        for aid, alias, account_ref in rows:
+            lines.append(f"• {escape(alias)} — <code>{escape(account_ref)}</code>")
+    else:
+        lines.append("Bạn chưa thêm tài khoản cho site này.")
+    return "\\n".join(lines)
+
+def site_detail_kb(site):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ THÊM TÀI KHOẢN", callback_data=f"siteadd:{site}")
+    kb.button(text="🔄 LÀM MỚI DANH SÁCH", callback_data=f"site:{site}")
+    kb.button(text="⬅️ DANH SÁCH SITE", callback_data="sites")
+    kb.button(text="🏠 MENU CHÍNH", callback_data="home")
+    kb.adjust(1)
     return kb.as_markup()
 
 def back_kb(target="home"):
@@ -178,7 +210,11 @@ async def add_saved_account(m: Message):
         except sqlite3.IntegrityError:
             await m.answer("Tên gợi nhớ này đã tồn tại. Hãy chọn tên khác.")
             return
-    await m.answer(f"✅ Đã lưu tài khoản <b>{escape(alias)}</b> · {escape(game.upper())} · <code>{escape(account_ref)}</code>.")
+    await m.answer(
+        f"✅ <b>ĐÃ THÊM TÀI KHOẢN</b>\\nSite: <b>{escape(game.upper())}</b>\\n"
+        f"Tên gợi nhớ: <b>{escape(alias)}</b>\\nTên đăng nhập: <code>{escape(account_ref)}</code>\\n\\n"
+        "Bạn có thể quay lại SITE GAME để xem danh sách tài khoản."
+    )
 
 @dp.message(Command("accounts"))
 async def list_saved_accounts(m: Message):
@@ -471,7 +507,19 @@ async def list_my_codes(m: Message):
 @dp.message(CommandStart())
 async def start(m: Message):
     await ensure_user(m.from_user)
-    await m.answer("🎉 <b>CHÀO MỪNG ĐẾN VỚI NGHIỆN CODE BOT</b>\n\nChọn danh mục bạn cần bên dưới.", reply_markup=home_kb(m.from_user.id))
+    name = escape(m.from_user.full_name or "Bạn")
+    welcome = (
+        "━━━━━━━━━━━━━━━━━━\\n"
+        "🎉 <b>NGHIỆN CODE BOT</b>\\n"
+        "━━━━━━━━━━━━━━━━━━\\n\\n"
+        f"Xin chào <b>{name}</b>! 👋\\n"
+        "Hệ thống quản lý SITE GAME và dịch vụ.\\n\\n"
+        "🎮 Chọn site để quản lý tài khoản riêng.\\n"
+        "💳 Theo dõi số dư và giao dịch.\\n"
+        "📦 Quản lý đơn hàng, dịch vụ.\\n\\n"
+        "👇 <b>VUI LÒNG CHỌN CHỨC NĂNG</b>"
+    )
+    await m.answer(welcome, reply_markup=home_kb(m.from_user.id))
 
 @dp.message(Command("menu"))
 async def menu(m: Message):
@@ -518,7 +566,41 @@ async def deposit_request(m: Message):
 
 @dp.callback_query(F.data == "home")
 async def cb_home(c: CallbackQuery):
-    await c.message.edit_text("🏠 <b>MENU CHÍNH</b>", reply_markup=home_kb(c.from_user.id))
+    await c.message.edit_text("━━━━━━━━━━━━━━━━━━\\n🏠 <b>MENU CHÍNH</b>\\n━━━━━━━━━━━━━━━━━━\\n\\nChọn chức năng bạn muốn sử dụng.", reply_markup=home_kb(c.from_user.id))
+    await c.answer()
+
+@dp.callback_query(F.data == "sites")
+async def cb_sites(c: CallbackQuery):
+    await c.message.edit_text(
+        "🎮 <b>DANH SÁCH SITE GAME</b>\\n\\n"
+        "Chọn website bạn đang sử dụng. Mỗi site có danh sách tài khoản riêng.",
+        reply_markup=sites_kb())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("site:"))
+async def cb_site_detail(c: CallbackQuery):
+    site = c.data.split(":", 1)[1].upper()
+    if site not in GAME_SITES:
+        await c.answer("Site không hợp lệ.", show_alert=True)
+        return
+    await c.message.edit_text(
+        await site_detail_text(c.from_user.id, site),
+        reply_markup=site_detail_kb(site))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("siteadd:"))
+async def cb_site_add(c: CallbackQuery):
+    site = c.data.split(":", 1)[1].upper()
+    if site not in GAME_SITES:
+        await c.answer("Site không hợp lệ.", show_alert=True)
+        return
+    await c.message.edit_text(
+        f"➕ <b>THÊM TÀI KHOẢN {escape(site)}</b>\\n\\n"
+        "Gửi theo cú pháp sau để lưu tài khoản:\\n"
+        f"<code>/addaccount Tên_gợi_nhớ|{escape(site)}|Tên_đăng_nhập</code>\\n\\n"
+        "Ví dụ: <code>/addaccount Acc chính|{escape(site)}|user123</code>\\n"
+        "⚠️ Không nhập mật khẩu, OTP hoặc thông tin thanh toán.",
+        reply_markup=back_kb(f"site:{site}"))
     await c.answer()
 
 @dp.callback_query(F.data == "cat:GAME")
