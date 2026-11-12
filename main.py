@@ -106,6 +106,8 @@ async def admin_kb():
         ("admin_payment","🏦 CÀI ĐẶT THANH TOÁN","a:payment"),("admin_notify","📢 THÔNG BÁO THEO ID","a:notify"),
         ("admin_notifyall","📣 THÔNG BÁO TẤT CẢ ID","a:notifyall"),("admin_minitext","✏️ NỘI DUNG MINIGAME","a:minitext")
     ]
+    b.button(text="📊 TỔNG QUAN / DOANH THU", callback_data="am:stats")
+    b.button(text="👥 QUẢN LÝ THÀNH VIÊN", callback_data="am:users")
     for key, label, data in items:
         if await folder_is_on(key):
             b.button(text=label, callback_data=data)
@@ -159,6 +161,26 @@ async def show_product_detail(message, pid):
           f"Mô tả: {description or 'Chưa có'}\\nGiá: {price:,}đ\\n"
           f"Trạng thái: {'BẬT' if active else 'TẮT'}\\nChọn thao tác:")
     await message.edit_text(body,reply_markup=product_detail_kb(i,active))
+
+def admin_users_kb(rows):
+    b = InlineKeyboardBuilder()
+    for uid, name, balance, blocked in rows:
+        label = f"{'🚫' if blocked else '👤'} {name or 'Thành viên'} · ID {uid}"[:60]
+        b.button(text=label, callback_data=f"amu:{uid}")
+    b.button(text="🔎 TÌM THÀNH VIÊN KHÁC", callback_data="am:users")
+    b.button(text="⬅️ MENU QUẢN TRỊ", callback_data="a:refresh")
+    b.adjust(1)
+    return b.as_markup()
+
+def admin_user_detail_kb(uid, blocked):
+    b = InlineKeyboardBuilder()
+    b.button(text="➕ CỘNG SỐ DƯ", callback_data=f"amb:{uid}:add")
+    b.button(text="➖ TRỪ SỐ DƯ", callback_data=f"amb:{uid}:sub")
+    b.button(text=("🔓 MỞ KHÓA TÀI KHOẢN" if blocked else "🚫 KHÓA TÀI KHOẢN"), callback_data=f"amlock:{uid}")
+    b.button(text="⬅️ DANH SÁCH THÀNH VIÊN", callback_data="am:users")
+    b.button(text="🏠 MENU QUẢN TRỊ", callback_data="a:refresh")
+    b.adjust(2,1,1,1)
+    return b.as_markup()
 
 def admin_deposits_kb(rows):
     b = InlineKeyboardBuilder()
@@ -314,7 +336,26 @@ async def admin_actions(c: CallbackQuery):
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT id,user_id,product_name,price,status,created_at FROM orders ORDER BY id DESC LIMIT 20"); rows=await cur.fetchall()
         body="🧾 QUẢN LÝ ĐƠN HÀNG\\n"+("\\n".join([f"#{i} | User {u} | {n} | {p:,}đ | {st} | {t}" for i,u,n,p,st,t in rows]) if rows else "Chưa có đơn hàng.")
-        await c.message.edit_text(body,reply_markup=kb([("🔄 TẢI LẠI","a:orders"),("⬅️ MENU ADMIN","a:refresh")]))
+        buttons=[]
+        for i,u,n,p,st,t in rows:
+            buttons.append((f"⚙️ ĐƠN #{i} · {st}"[:60],f"aord:{i}"))
+        buttons.extend([("🔄 TẢI LẠI","a:orders"),("⬅️ MENU ADMIN","a:refresh")])
+        await c.message.edit_text(body,reply_markup=kb(buttons))
+    elif key=="stats":
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(balance),0) FROM users"); users_total,balance_total=await cur.fetchone()
+            cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(price),0) FROM orders"); orders_total,sales_total=await cur.fetchone()
+            cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM deposits WHERE status='approved'"); deposits_total,deposits_sum=await cur.fetchone()
+            cur=await db.execute("SELECT COUNT(*) FROM orders WHERE status='processing'"); processing=(await cur.fetchone())[0]
+            cur=await db.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'"); pending_deposits=(await cur.fetchone())[0]
+        body=(f"📊 TỔNG QUAN BOT\\n\\n👥 Thành viên: {users_total}\\n💳 Tổng số dư hiện tại: {balance_total:,}đ\\n"
+              f"🧾 Tổng đơn: {orders_total}\\n💵 Tổng giá trị đơn: {sales_total:,}đ\\n"
+              f"💰 Tổng nạp đã duyệt: {deposits_sum:,}đ ({deposits_total} lượt)\\n"
+              f"⏳ Đơn đang xử lý: {processing}\\n🔔 Yêu cầu nạp chờ duyệt: {pending_deposits}")
+        await c.message.edit_text(body,reply_markup=kb([("🔄 CẬP NHẬT","am:stats"),("👥 QUẢN LÝ THÀNH VIÊN","am:users"),("🧾 QUẢN LÝ ĐƠN","a:orders"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+    elif key=="users":
+        pending[c.from_user.id]={"admin_user_search":True}
+        await c.message.edit_text("👥 QUẢN LÝ THÀNH VIÊN\\nNhập Telegram ID hoặc tên để tìm:",reply_markup=kb([("⬅️ MENU QUẢN TRỊ","a:refresh")]))
     elif key=="payment":
         pending[c.from_user.id]="payment"
         await c.message.answer("🏦 CÀI ĐẶT THANH TOÁN\\nNhập: TÊN NGÂN HÀNG|SỐ TK|CHỦ TK|NỘI DUNG CHUYỂN KHOẢN")
@@ -428,6 +469,95 @@ async def admin_notification_action(c: CallbackQuery):
         await c.message.edit_text(f"📣 ĐÃ GỬI THÔNG BÁO TOÀN BOT\\nThành công: {sent}\\nKhông gửi được: {failed}\\nTổng tài khoản: {len(recipients)}",reply_markup=await admin_kb())
         return await c.answer("Đã hoàn tất gửi.")
     return await c.answer("Thao tác không hợp lệ.",show_alert=True)
+
+@dp.callback_query(F.data.startswith("am:"))
+async def admin_management_menu(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    key=c.data.split(":")[1]
+    if key=="stats":
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(balance),0) FROM users"); users_total,balance_total=await cur.fetchone()
+            cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(price),0) FROM orders"); orders_total,sales_total=await cur.fetchone()
+            cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM deposits WHERE status='approved'"); deposits_total,deposits_sum=await cur.fetchone()
+            cur=await db.execute("SELECT COUNT(*) FROM orders WHERE status='processing'"); processing=(await cur.fetchone())[0]
+            cur=await db.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'"); pending_deposits=(await cur.fetchone())[0]
+        body=(f"📊 TỔNG QUAN BOT\\n\\n👥 Thành viên: {users_total}\\n💳 Tổng số dư hiện tại: {balance_total:,}đ\\n"
+              f"🧾 Tổng đơn: {orders_total}\\n💵 Tổng giá trị đơn: {sales_total:,}đ\\n"
+              f"💰 Tổng nạp đã duyệt: {deposits_sum:,}đ ({deposits_total} lượt)\\n"
+              f"⏳ Đơn đang xử lý: {processing}\\n🔔 Yêu cầu nạp chờ duyệt: {pending_deposits}")
+        await c.message.edit_text(body,reply_markup=kb([("🔄 CẬP NHẬT","am:stats"),("👥 QUẢN LÝ THÀNH VIÊN","am:users"),("🧾 QUẢN LÝ ĐƠN","a:orders"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+    elif key=="users":
+        pending[c.from_user.id]={"admin_user_search":True}
+        await c.message.edit_text("👥 QUẢN LÝ THÀNH VIÊN\\nNhập Telegram ID hoặc tên để tìm:",reply_markup=kb([("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("amu:"))
+async def admin_user_detail(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    target=int(c.data.split(":")[1])
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT id,name,balance,blocked FROM users WHERE id=?",(target,)); row=await cur.fetchone()
+        cur=await db.execute("SELECT COUNT(*) FROM orders WHERE user_id=?",(target,)); order_count=(await cur.fetchone())[0]
+        cur=await db.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM deposits WHERE user_id=? AND status='approved'",(target,)); dep_count,dep_sum=await cur.fetchone()
+    if not row: return await c.answer("Không tìm thấy thành viên.",show_alert=True)
+    uid,name,balance,blocked=row
+    body=f"👤 THÀNH VIÊN\\nTên: {name or 'Chưa cập nhật'}\\nTelegram ID: {uid}\\nSố dư: {balance:,}đ\\nĐơn hàng: {order_count}\\nNạp đã duyệt: {dep_count} lượt / {dep_sum:,}đ\\nTrạng thái: {'ĐANG KHÓA' if blocked else 'HOẠT ĐỘNG'}"
+    await c.message.edit_text(body,reply_markup=admin_user_detail_kb(uid,blocked))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("amb:"))
+async def admin_balance_prompt(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    _,target,direction=c.data.split(":")
+    if direction not in {"add","sub"}: return await c.answer("Thao tác không hợp lệ.",show_alert=True)
+    pending[c.from_user.id]={"admin_balance_user_id":int(target),"direction":direction}
+    await c.message.answer(f"{'➕ CỘNG' if direction=='add' else '➖ TRỪ'} SỐ DƯ cho ID {target}\\nNhập số tiền VNĐ:",reply_markup=kb([("⬅️ HỦY","amu:"+target)]))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("amlock:"))
+async def admin_user_toggle_block(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    target=int(c.data.split(":")[1])
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT blocked FROM users WHERE id=?",(target,)); row=await cur.fetchone()
+        if not row: return await c.answer("Không tìm thấy thành viên.",show_alert=True)
+        await db.execute("UPDATE users SET blocked=1-blocked WHERE id=?",(target,))
+        await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(c.from_user.id,f"toggle block user {target}"))
+        await db.commit()
+    await c.answer("Đã cập nhật trạng thái thành viên.")
+    await admin_user_detail(c.message,target)
+
+@dp.callback_query(F.data.startswith("aord:"))
+async def admin_order_detail(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    oid=int(c.data.split(":")[1])
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT user_id,product_name,account,price,status,created_at FROM orders WHERE id=?",(oid,)); row=await cur.fetchone()
+    if not row: return await c.answer("Không tìm thấy đơn hàng.",show_alert=True)
+    u,name,account,price,status,created=row
+    body=f"🧾 CHI TIẾT ĐƠN #{oid}\\nUser: {u}\\nSản phẩm: {name}\\nTài khoản: {account or '-'}\\nGiá: {price:,}đ\\nTrạng thái: {status}\\nTạo lúc: {created}"
+    buttons=[("⏳ ĐANG XỬ LÝ",f"aost:{oid}:processing"),("✅ HOÀN THÀNH",f"aost:{oid}:completed"),("❌ ĐÃ HỦY",f"aost:{oid}:cancelled"),("⬅️ DANH SÁCH ĐƠN","a:orders")]
+    await c.message.edit_text(body,reply_markup=kb(buttons))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("aost:"))
+async def admin_order_set_status(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    parts=c.data.split(":")
+    if len(parts)!=3 or parts[2] not in {"processing","completed","cancelled"}:
+        return await c.answer("Trạng thái không hợp lệ.",show_alert=True)
+    oid=int(parts[1])
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT user_id,status FROM orders WHERE id=?",(oid,)); row=await cur.fetchone()
+        if not row: return await c.answer("Không tìm thấy đơn hàng.",show_alert=True)
+        await db.execute("UPDATE orders SET status=? WHERE id=?",(parts[2],oid))
+        await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(c.from_user.id,f"order {oid} status {parts[2]}"))
+        await db.commit()
+    try:
+        await c.bot.send_message(row[0],f"📦 Đơn hàng #{oid} đã cập nhật trạng thái: {parts[2]}.")
+    except Exception: pass
+    await c.answer("Đã cập nhật trạng thái đơn.")
+    await admin_order_detail(c,oid)
 
 @dp.callback_query(F.data.startswith("ap:"))
 async def admin_edit_price(c: CallbackQuery):
@@ -584,6 +714,42 @@ async def process_admin_text(m: Message):
     uid=m.from_user.id
     task=pending.get(uid)
     if uid not in ADMINS: return False
+    if isinstance(task,dict) and task.get("admin_user_search"):
+        query=(m.text or "").strip()
+        if not query:
+            await m.answer("Nhập Telegram ID hoặc tên thành viên.")
+            return True
+        async with aiosqlite.connect(DB) as db:
+            if query.isdigit():
+                cur=await db.execute("SELECT id,name,balance,blocked FROM users WHERE id=? LIMIT 20",(int(query),))
+            else:
+                cur=await db.execute("SELECT id,name,balance,blocked FROM users WHERE name LIKE ? ORDER BY id DESC LIMIT 20",(f"%{query}%",))
+            rows=await cur.fetchall()
+        pending.pop(uid,None)
+        await m.answer(("🔎 KẾT QUẢ TÌM KIẾM\\n" if rows else "Không tìm thấy thành viên phù hợp."),reply_markup=admin_users_kb(rows) if rows else kb([("🔎 TÌM LẠI","am:users"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+        return True
+    if isinstance(task,dict) and "admin_balance_user_id" in task:
+        raw=re.sub(r"[^0-9]","",m.text or "")
+        if not raw or int(raw)<=0:
+            await m.answer("Số tiền không hợp lệ. Nhập số VNĐ lớn hơn 0.")
+            return True
+        target=int(task["admin_balance_user_id"]); amount=int(raw); direction=task["direction"]
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT balance FROM users WHERE id=?",(target,)); row=await cur.fetchone()
+            if not row:
+                pending.pop(uid,None)
+                await m.answer("Không tìm thấy thành viên.")
+                return True
+            if direction=="sub" and row[0]<amount:
+                await m.answer(f"Số dư hiện tại chỉ {row[0]:,}đ, không thể trừ {amount:,}đ.")
+                return True
+            delta=amount if direction=="add" else -amount
+            await db.execute("UPDATE users SET balance=balance+? WHERE id=?",(delta,target))
+            await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(uid,f"balance {direction} {amount} user {target}"))
+            await db.commit()
+        pending.pop(uid,None)
+        await m.answer(f"Đã {'cộng' if direction=='add' else 'trừ'} {amount:,}đ cho ID {target}.",reply_markup=kb([("👤 XEM THÀNH VIÊN",f"amu:{target}"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+        return True
     if isinstance(task,dict) and "admin_product_field" in task:
         value=(m.text or "").strip(); field=task["admin_product_field"]; pid=task["product_id"]
         if not value: await m.answer("Nội dung không được để trống."); return True
