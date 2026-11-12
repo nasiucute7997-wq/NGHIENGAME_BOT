@@ -51,12 +51,37 @@ def home_kb():
     return b.as_markup()
 
 def back(): return kb([("⬅️ MENU CHÍNH","m:home")])
-def admin_kb(): return kb([
-    ("➕ THÊM SẢN PHẨM","a:add"),("📦 DANH SÁCH SẢN PHẨM","a:products"),
-    ("💰 DUYỆT NẠP TIỀN","a:deposits"),("🧾 ĐƠN HÀNG","a:orders"),
-    ("🏦 CÀI ĐẶT THANH TOÁN","a:payment"),("✏️ SỬA NỘI DUNG MINIGAME","a:minitext"),
-    ("⬅️ MENU CHÍNH","m:home")
-])
+def admin_kb():
+    b = InlineKeyboardBuilder()
+    for label, data in [
+        ("➕ THÊM SẢN PHẨM","a:add"),("📦 QUẢN LÝ SẢN PHẨM","a:products"),
+        ("💰 DUYỆT NẠP TIỀN","a:deposits"),("🧾 QUẢN LÝ ĐƠN HÀNG","a:orders"),
+        ("🏦 CÀI ĐẶT THANH TOÁN","a:payment"),("✏️ NỘI DUNG MINIGAME","a:minitext"),
+        ("🔄 LÀM MỚI MENU","a:refresh"),("⬅️ MENU CHÍNH","m:home")
+    ]:
+        b.button(text=label, callback_data=data)
+    b.adjust(2)
+    return b.as_markup()
+
+def admin_products_kb(rows):
+    b = InlineKeyboardBuilder()
+    for pid, category, game, name, price, active in rows:
+        b.button(text=f"💵 SỬA GIÁ #{pid}", callback_data=f"ap:{pid}")
+        b.button(text=f"{'🔴 TẮT' if active else '🟢 BẬT'} #{pid}", callback_data=f"at:{pid}")
+    b.button(text="🔄 TẢI LẠI", callback_data="a:products")
+    b.button(text="⬅️ MENU ADMIN", callback_data="a:refresh")
+    b.adjust(2)
+    return b.as_markup()
+
+def admin_deposits_kb(rows):
+    b = InlineKeyboardBuilder()
+    for did, user_id, amount, status in rows:
+        b.button(text=f"✅ DUYỆT NẠP #{did}", callback_data=f"adok:{did}")
+        b.button(text=f"❌ TỪ CHỐI #{did}", callback_data=f"adno:{did}")
+    b.button(text="🔄 TẢI LẠI", callback_data="a:deposits")
+    b.button(text="⬅️ MENU ADMIN", callback_data="a:refresh")
+    b.adjust(2)
+    return b.as_markup()
 
 async def ensure_user(u):
     async with aiosqlite.connect(DB) as db:
@@ -147,28 +172,98 @@ async def buy(c: CallbackQuery):
 async def admin_actions(c: CallbackQuery):
     if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
     key=c.data.split(":")[1]
-    if key=="add":
+    if key=="refresh":
+        await c.message.edit_text("🛠 TRUNG TÂM QUẢN TRỊ",reply_markup=admin_kb())
+    elif key=="add":
         pending[c.from_user.id]="addproduct"
-        await c.message.answer("Nhập: DANH_MỤC|GAME|TÊN SẢN PHẨM|GIÁ\nVí dụ: GAME|XX8|CODE 100K|50000\nDanh mục: GAME, SHARE, SMS, PRX.")
+        await c.message.answer("➕ THÊM SẢN PHẨM\\nNhập theo mẫu: DANH_MỤC|GAME|TÊN SẢN PHẨM|GIÁ\\nVí dụ: GAME|XX8|CODE 100K|50000\\nDanh mục: GAME, SHARE, SMS, PRX.")
     elif key=="products":
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT id,category,game,name,price,active FROM products ORDER BY id DESC LIMIT 30"); rows=await cur.fetchall()
-        await c.message.answer("📦 SẢN PHẨM\n"+("\n".join([f"#{i} [{cat}/{g}] {n} — {p:,}đ ({'ON' if a else 'OFF'})" for i,cat,g,n,p,a in rows]) if rows else "Chưa có sản phẩm.")+"\nSửa giá: /price ID GIÁ | Bật/tắt: /toggle ID")
+        body="📦 QUẢN LÝ SẢN PHẨM\\n"+("\\n".join([f"#{i} [{cat}/{g}] {n} — {p:,}đ ({'ĐANG BẬT' if a else 'ĐANG TẮT'})" for i,cat,g,n,p,a in rows]) if rows else "Chưa có sản phẩm.")
+        await c.message.edit_text(body,reply_markup=admin_products_kb(rows))
     elif key=="deposits":
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT id,user_id,amount,status FROM deposits WHERE status='pending' ORDER BY id"); rows=await cur.fetchall()
-        await c.message.answer("💰 YÊU CẦU NẠP\n"+("\n".join([f"#{i} User {u} — {a:,}đ — {s}" for i,u,a,s in rows]) if rows else "Không có yêu cầu chờ duyệt.")+"\nDuyệt: /duyetnap ID")
+        body="💰 DUYỆT NẠP TIỀN\\n"+("\\n".join([f"#{i} | User {u} | {a:,}đ | {st}" for i,u,a,st in rows]) if rows else "Không có yêu cầu chờ duyệt.")
+        await c.message.edit_text(body,reply_markup=admin_deposits_kb(rows))
     elif key=="orders":
         async with aiosqlite.connect(DB) as db:
-            cur=await db.execute("SELECT id,user_id,product_name,price,status FROM orders ORDER BY id DESC LIMIT 20"); rows=await cur.fetchall()
-        await c.message.answer("🧾 ĐƠN HÀNG\n"+("\n".join([f"#{i} User {u} {n} {p:,}đ [{s}]" for i,u,n,p,s in rows]) if rows else "Chưa có đơn."))
+            cur=await db.execute("SELECT id,user_id,product_name,price,status,created_at FROM orders ORDER BY id DESC LIMIT 20"); rows=await cur.fetchall()
+        body="🧾 QUẢN LÝ ĐƠN HÀNG\\n"+("\\n".join([f"#{i} | User {u} | {n} | {p:,}đ | {st} | {t}" for i,u,n,p,st,t in rows]) if rows else "Chưa có đơn hàng.")
+        await c.message.edit_text(body,reply_markup=kb([("🔄 TẢI LẠI","a:orders"),("⬅️ MENU ADMIN","a:refresh")]))
     elif key=="payment":
         pending[c.from_user.id]="payment"
-        await c.message.answer("Nhập thông tin thanh toán: TÊN NGÂN HÀNG|SỐ TK|CHỦ TK|NỘI DUNG CHUYỂN KHOẢN")
+        await c.message.answer("🏦 CÀI ĐẶT THANH TOÁN\\nNhập: TÊN NGÂN HÀNG|SỐ TK|CHỦ TK|NỘI DUNG CHUYỂN KHOẢN")
     elif key=="minitext":
         pending[c.from_user.id]="minitext"
-        await c.message.answer("Nhập nội dung hiển thị cho mục MINIGAME LIVE (chỉ thông tin/thể lệ).")
+        await c.message.answer("✏️ NHẬP NỘI DUNG MINIGAME LIVE (chỉ thông tin/thể lệ).")
     await c.answer()
+
+@dp.callback_query(F.data.startswith("ap:"))
+async def admin_edit_price(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    pid=int(c.data.split(":")[1])
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT name,price FROM products WHERE id=?",(pid,)); row=await cur.fetchone()
+    if not row: return await c.answer("Không tìm thấy sản phẩm.",show_alert=True)
+    pending[c.from_user.id]={"admin_price_id":pid}
+    await c.message.answer(f"💵 SỬA GIÁ SẢN PHẨM #{pid} — {row[0]}\\nGiá hiện tại: {row[1]:,}đ\\nNhập giá mới bằng số (VNĐ).")
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("at:"))
+async def admin_toggle_product(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    pid=int(c.data.split(":")[1])
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT active FROM products WHERE id=?",(pid,)); row=await cur.fetchone()
+        if not row: return await c.answer("Không tìm thấy sản phẩm.",show_alert=True)
+        await db.execute("UPDATE products SET active=1-active WHERE id=?",(pid,)); await db.commit()
+    await c.answer("Đã đổi trạng thái sản phẩm.")
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT id,category,game,name,price,active FROM products ORDER BY id DESC LIMIT 30"); rows=await cur.fetchall()
+    body="📦 QUẢN LÝ SẢN PHẨM\\n"+("\\n".join([f"#{i} [{cat}/{g}] {n} — {p:,}đ ({'ĐANG BẬT' if a else 'ĐANG TẮT'})" for i,cat,g,n,p,a in rows]) if rows else "Chưa có sản phẩm.")
+    await c.message.edit_text(body,reply_markup=admin_products_kb(rows))
+
+@dp.callback_query(F.data.startswith("adok:"))
+async def admin_approve_deposit_button(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    did=int(c.data.split(":")[1])
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur=await db.execute("SELECT user_id,amount,status FROM deposits WHERE id=?",(did,)); row=await cur.fetchone()
+        if not row or row[2]!="pending":
+            await db.rollback(); return await c.answer("Yêu cầu không còn chờ duyệt.",show_alert=True)
+        await db.execute("INSERT OR IGNORE INTO users(id,name) VALUES(?,?)",(row[0],str(row[0])))
+        await db.execute("UPDATE users SET balance=balance+? WHERE id=?",(row[1],row[0]))
+        await db.execute("UPDATE deposits SET status='approved' WHERE id=?",(did,))
+        await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(c.from_user.id,f"approve deposit {did}"))
+        await db.commit()
+    try: await c.bot.send_message(row[0],f"✅ Yêu cầu nạp #{did} đã được duyệt: +{row[1]:,}đ.")
+    except Exception: pass
+    await c.answer("Đã duyệt nạp tiền.")
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT id,user_id,amount,status FROM deposits WHERE status='pending' ORDER BY id"); rows=await cur.fetchall()
+    body="💰 DUYỆT NẠP TIỀN\\n"+("\\n".join([f"#{i} | User {u} | {a:,}đ | {st}" for i,u,a,st in rows]) if rows else "Không có yêu cầu chờ duyệt.")
+    await c.message.edit_text(body,reply_markup=admin_deposits_kb(rows))
+
+@dp.callback_query(F.data.startswith("adno:"))
+async def admin_reject_deposit_button(c: CallbackQuery):
+    if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+    did=int(c.data.split(":")[1])
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT user_id,status FROM deposits WHERE id=?",(did,)); row=await cur.fetchone()
+        if not row or row[1]!="pending": return await c.answer("Yêu cầu không còn chờ duyệt.",show_alert=True)
+        await db.execute("UPDATE deposits SET status='rejected' WHERE id=?",(did,))
+        await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(c.from_user.id,f"reject deposit {did}"))
+        await db.commit()
+    try: await c.bot.send_message(row[0],f"❌ Yêu cầu nạp #{did} đã bị từ chối. Vui lòng liên hệ Admin nếu cần hỗ trợ.")
+    except Exception: pass
+    await c.answer("Đã từ chối yêu cầu nạp.")
+    async with aiosqlite.connect(DB) as db:
+        cur=await db.execute("SELECT id,user_id,amount,status FROM deposits WHERE status='pending' ORDER BY id"); rows=await cur.fetchall()
+    body="💰 DUYỆT NẠP TIỀN\\n"+("\\n".join([f"#{i} | User {u} | {a:,}đ | {st}" for i,u,a,st in rows]) if rows else "Không có yêu cầu chờ duyệt.")
+    await c.message.edit_text(body,reply_markup=admin_deposits_kb(rows))
 
 @dp.message(Command("duyetnap"))
 async def approve_deposit(m: Message):
@@ -223,6 +318,17 @@ async def process_admin_text(m: Message):
     uid=m.from_user.id
     task=pending.get(uid)
     if uid not in ADMINS or not isinstance(task,str): return False
+    if isinstance(task,dict) and "admin_price_id" in task:
+        raw=re.sub(r"[^0-9]","",m.text or "")
+        if not raw or int(raw)<=0:
+            await m.answer("Giá không hợp lệ. Nhập lại giá bằng số.")
+            return True
+        pid=task["admin_price_id"]
+        async with aiosqlite.connect(DB) as db:
+            await db.execute("UPDATE products SET price=? WHERE id=?",(int(raw),pid)); await db.commit()
+        pending.pop(uid,None)
+        await m.answer(f"✅ Đã cập nhật giá sản phẩm #{pid}: {int(raw):,}đ.",reply_markup=admin_kb())
+        return True
     if task=="addproduct":
         p=(m.text or "").split("|",3)
         if len(p)!=4 or p[0].strip().upper() not in {"GAME","SHARE","SMS","PRX"} or not p[3].strip().isdigit():
