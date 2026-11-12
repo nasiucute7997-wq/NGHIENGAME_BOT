@@ -102,7 +102,7 @@ def home_kb(uid):
         ("👤 Tài khoản", "account"),
         ("💳 Nạp tiền", "deposit"),
         ("📦 Lịch sử đơn", "orders"),
-        ("📖 Hướng dẫn", "guide"),
+        ("📖 Hướng dẫn", "guide"),\n        ("🎟 QUÉT & LƯU CODE", "codes_help"),\n        ("🎟 Mã đã lưu", "mycodes"),
         ("☎️ Liên hệ Admin", "support"),
     ]:
         kb.button(text=label, callback_data=data)
@@ -154,7 +154,7 @@ async def add_saved_account(m: Message):
     await ensure_user(m.from_user)
     parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
     if len(parts) != 3 or not all(parts):
-        await m.answer("Cú pháp: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\\nVí dụ: <code>/addaccount Acc chính|XX8|user123</code>\\nKhông nhập mật khẩu hoặc mã OTP.")
+        await m.answer("Cú pháp: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\nVí dụ: <code>/addaccount Acc chính|XX8|user123</code>\nKhông nhập mật khẩu hoặc mã OTP.")
         return
     alias, game, account_ref = parts
     if len(alias) > 40 or len(game) > 30 or len(account_ref) > 80:
@@ -182,7 +182,7 @@ async def list_saved_accounts(m: Message):
     lines = ["👤 <b>TÀI KHOẢN ĐÃ LƯU</b>"]
     for aid, alias, game, ref in rows:
         lines.append(f"#{aid} · {escape(alias)} · {escape(game)} · <code>{escape(ref)}</code>")
-    await m.answer("\\n".join(lines))
+    await m.answer("\n".join(lines))
 
 def extract_code(text):
     import re
@@ -190,8 +190,8 @@ def extract_code(text):
         return None
     # Chỉ nhận chuỗi được gắn nhãn CODE/MÃ/GIFT/VOUCHER để hạn chế quét nhầm.
     patterns = [
-        r"(?i)(?:CODE|MÃ\\s*CODE|GIFT\\s*CODE|VOUCHER)\\s*[:：=\\-]?\\s*([A-Z0-9][A-Z0-9-]{5,31})",
-        r"(?i)(?:MÃ|CODE)\\s*[:：]\\s*([A-Z0-9][A-Z0-9-]{5,31})"
+        r"(?i)(?:CODE|MÃ\s*CODE|GIFT\s*CODE|VOUCHER)\s*[:：=\-]?\s*([A-Z0-9][A-Z0-9-]{5,31})",
+        r"(?i)(?:MÃ|CODE)\s*[:：]\s*([A-Z0-9][A-Z0-9-]{5,31})"
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -222,7 +222,7 @@ async def scan_telegram_message(m: Message):
     if not accounts:
         await m.answer("Bạn chưa có tài khoản lưu sẵn. Tạo bằng /addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập rồi quét lại.")
         return
-    await m.answer(f"🔎 Phát hiện mã: <code>{escape(code)}</code>\\nChọn tài khoản muốn gắn mã:", reply_markup=code_menu_kb(accounts, code))
+    await m.answer(f"🔎 Phát hiện mã: <code>{escape(code)}</code>\nChọn tài khoản muốn gắn mã:", reply_markup=code_menu_kb(accounts, code))
 
 @dp.callback_query(F.data.startswith("codeacct:"))
 async def choose_code_account(c: CallbackQuery):
@@ -247,7 +247,7 @@ async def choose_code_account(c: CallbackQuery):
     kb.button(text="❌ Hủy", callback_data="home")
     kb.adjust(1)
     await c.message.edit_text(
-        f"🔐 <b>XÁC NHẬN GẮN MÃ</b>\\nMã: <code>{escape(code)}</code>\\nGame: <b>{escape(game)}</b>\\nTài khoản: <b>{escape(alias)}</b> (<code>{escape(account_ref)}</code>)\\n\\nBot chỉ lưu mã vào danh sách của tài khoản; chưa tự đăng nhập hoặc đổi thưởng.",
+        f"🔐 <b>XÁC NHẬN GẮN MÃ</b>\nMã: <code>{escape(code)}</code>\nGame: <b>{escape(game)}</b>\nTài khoản: <b>{escape(alias)}</b> (<code>{escape(account_ref)}</code>)\n\nBot chỉ lưu mã vào danh sách của tài khoản; chưa tự đăng nhập hoặc đổi thưởng.",
         reply_markup=kb.as_markup())
     await c.answer()
 
@@ -274,7 +274,7 @@ async def save_captured_code(c: CallbackQuery):
         except sqlite3.IntegrityError:
             await c.answer("Mã này đã được lưu rồi.", show_alert=True)
             return
-    await c.message.edit_text(f"✅ Đã lưu mã #{code_id} vào tài khoản.\\nGame: <b>{escape(account[0])}</b>\\nMã: <code>{escape(code)}</code>\\nTrạng thái: <b>Đã lưu – chờ bạn tự đổi thưởng</b>.")
+    await c.message.edit_text(f"✅ Đã lưu mã #{code_id} vào tài khoản.\nGame: <b>{escape(account[0])}</b>\nMã: <code>{escape(code)}</code>\nTrạng thái: <b>Đã lưu – chờ bạn tự đổi thưởng</b>.")
     await c.answer("Đã lưu mã.")
 
 @dp.message(Command("mycodes"))
@@ -290,7 +290,7 @@ async def list_my_codes(m: Message):
     lines = ["🎟 <b>MÃ CODE ĐÃ LƯU</b>"]
     for cid, game, code, alias, status in rows:
         lines.append(f"#{cid} · {escape(game)} · {escape(alias)} · <code>{escape(code)}</code> · {escape(status)}")
-    await m.answer("\\n".join(lines))
+    await m.answer("\n".join(lines))
 
 @dp.message(CommandStart())
 async def start(m: Message):
@@ -488,7 +488,7 @@ async def cb_orders(c: CallbackQuery):
 
 @dp.callback_query(F.data == "codes_help")
 async def cb_codes_help(c: CallbackQuery):
-    await c.message.edit_text("🎟 <b>QUÉT MÃ TỪ TELEGRAM</b>\\n1. Lưu tài khoản: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\\n2. Reply tin nhắn Telegram có mã rồi gửi <code>/scan</code>.\\n3. Chọn tài khoản và xác nhận lưu.\\n4. Xem mã bằng <code>/mycodes</code>.\\n\\nBot chỉ lưu mã và gắn vào tài khoản bạn chọn; không tự đăng nhập hoặc tự đổi thưởng.", reply_markup=back_kb())
+    await c.message.edit_text("🎟 <b>QUÉT MÃ TỪ TELEGRAM</b>\n1. Lưu tài khoản: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\n2. Reply tin nhắn Telegram có mã rồi gửi <code>/scan</code>.\n3. Chọn tài khoản và xác nhận lưu.\n4. Xem mã bằng <code>/mycodes</code>.\n\nBot chỉ lưu mã và gắn vào tài khoản bạn chọn; không tự đăng nhập hoặc tự đổi thưởng.", reply_markup=back_kb())
     await c.answer()
 
 @dp.callback_query(F.data == "mycodes")
@@ -504,7 +504,7 @@ async def cb_my_codes(c: CallbackQuery):
     lines=["🎟 <b>MÃ CODE ĐÃ LƯU</b>"]
     for cid,game,code,alias,status in rows:
         lines.append(f"#{cid} · {escape(game)} · {escape(alias)} · <code>{escape(code)}</code> · {escape(status)}")
-    await c.message.answer("\\n".join(lines))
+    await c.message.answer("\n".join(lines))
 
 @dp.callback_query(F.data == "guide")
 async def cb_guide(c: CallbackQuery):
