@@ -119,6 +119,7 @@ def home_kb(uid):
     kb = InlineKeyboardBuilder()
     for label, data in [
         ("🎮  CHỌN SITE GAME", "sites"),
+        ("🛒  MUA DỊCH VỤ GAME", "cat:GAME"),
         ("🏆  MINIGAME LIVE", "minigames"),
         ("🧩  DỊCH VỤ KHÁC", "other_services"),
         ("👤  TÀI KHOẢN CỦA TÔI", "account"),
@@ -183,7 +184,8 @@ async def service_keyboard(category, game=None):
                 (category,))).fetchall()
     kb = InlineKeyboardBuilder()
     for sid, name, price in rows:
-        kb.button(text=f"{name} · {money(price)}", callback_data=f"buy:{sid}")
+        callback = f"buy:{sid}:{game}" if category == "GAME" and game else f"buy:{sid}"
+        kb.button(text=f"{name} · {money(price)}", callback_data=callback)
     kb.button(text="⬅️ Menu chính", callback_data="home")
     kb.adjust(1)
     return kb.as_markup(), rows
@@ -855,8 +857,10 @@ async def cb_admin(c: CallbackQuery):
 async def cb_buy(c: CallbackQuery):
     await ensure_user(c.from_user)
     try:
-        sid = int(c.data.split(":", 1)[1])
-    except ValueError:
+        parts = c.data.split(":")
+        sid = int(parts[1])
+        selected_game = parts[2].upper() if len(parts) > 2 else ""
+    except (ValueError, IndexError):
         await c.answer("Mã sản phẩm không hợp lệ.", show_alert=True)
         return
     async with await db_connect() as db:
@@ -866,9 +870,11 @@ async def cb_buy(c: CallbackQuery):
             await c.answer("Sản phẩm không còn hoạt động.", show_alert=True)
             return
         name, price, category, game = service
-        if category == "GAME" and not game:
-            await c.answer("Sản phẩm cũ chưa gắn game. Admin cần cấu hình lại sản phẩm.", show_alert=True)
-            return
+        if category == "GAME":
+            game = game or selected_game
+            if game not in GAME_SITES:
+                await c.answer("Vui lòng chọn lại game.", show_alert=True)
+                return
         await db.execute(
             "INSERT INTO purchase_drafts(user_id,service_id,game,account_name,created_at) VALUES(?,?,?,?,?) "
             "ON CONFLICT(user_id) DO UPDATE SET service_id=excluded.service_id,game=excluded.game,account_name='',created_at=excluded.created_at",
@@ -877,7 +883,7 @@ async def cb_buy(c: CallbackQuery):
     await c.message.edit_text(
         f"🧾 <b>ĐẶT MUA {escape(game or category)}</b>\n\n"
         f"Sản phẩm: <b>{escape(name)}</b>\nGiá: <b>{money(price)}</b>\n\n"
-        "✍️ Vui lòng gửi <b>TÊN TÀI KHOẢN</b> cần mua dịch vụ.\n"
+        "✍️ Vui lòng gửi <b>TÊN TÀI KHOẢN / THÔNG TIN NHẬN DỊCH VỤ</b>.\n"
         "Không gửi mật khẩu hoặc mã OTP.",
         reply_markup=back_kb("home"))
     await c.answer()
