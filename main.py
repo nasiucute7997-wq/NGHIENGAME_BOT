@@ -11,6 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMINS = {int(x) for x in os.getenv("ADM_IDS", "").split(",") if x.strip().isdigit()}
+ROOT_ADMINS = set(ADMINS)
 DB = os.getenv("DB_PATH", "/data/bot.db")
 if not TOKEN:
     raise RuntimeError("Missing BOT_TOKEN")
@@ -29,12 +30,16 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS deposits(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, status TEXT DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS admin_logs(id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id INTEGER, action TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS admin_staff(user_id INTEGER PRIMARY KEY, added_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
         """)
         try:
             await db.execute("ALTER TABLE products ADD COLUMN description TEXT DEFAULT ''")
         except Exception:
             pass
         await db.commit()
+    async with aiosqlite.connect(DB) as db:
+        cur = await db.execute("SELECT user_id FROM admin_staff")
+        ADMINS.update(int(row[0]) for row in await cur.fetchall())
 
 def kb(rows):
     b = InlineKeyboardBuilder()
@@ -109,6 +114,8 @@ async def admin_kb():
     b.button(text="📊 TỔNG QUAN / DOANH THU", callback_data="am:stats")
     b.button(text="👥 QUẢN LÝ THÀNH VIÊN", callback_data="am:users")
     b.button(text="➕➖ CỘNG / TRỪ SỐ DƯ", callback_data="am:balance")
+    b.button(text="🧑‍💼 NHÂN VIÊN / PHÂN QUYỀN", callback_data="am:staff")
+    b.button(text="📜 LỊCH SỬ THAO TÁC", callback_data="am:logs")
     for key, label, data in items:
         if await folder_is_on(key):
             b.button(text=label, callback_data=data)
@@ -508,7 +515,43 @@ async def admin_management_menu(c: CallbackQuery):
     elif key=="users":
         pending[c.from_user.id]={"admin_user_search":True}
         await c.message.edit_text("👥 QUẢN LÝ THÀNH VIÊN\\nNhập Telegram ID hoặc tên để tìm:",reply_markup=kb([("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+    elif key=="logs":
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT admin_id,action,created_at FROM admin_logs ORDER BY id DESC LIMIT 30")
+            rows=await cur.fetchall()
+        body="📜 LỊCH SỬ THAO TÁC ADMIN\\n"+("\\n".join([f"{t} | Admin {aid} | {act}" for aid,act,t in rows]) if rows else "Chưa có lịch sử thao tác.")
+        await c.message.edit_text(body,reply_markup=kb([("🔄 TẢI LẠI","am:logs"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+    elif key=="staff":
+        if c.from_user.id not in ROOT_ADMINS:
+            return await c.answer("Chỉ Admin chủ mới được quản lý nhân viên.",show_alert=True)
+        async with aiosqlite.connect(DB) as db:
+            cur=await db.execute("SELECT user_id,added_by,created_at FROM admin_staff ORDER BY created_at DESC")
+            rows=await cur.fetchall()
+        body="🧑‍💼 QUẢN LÝ NHÂN VIÊN\\n"+("\\n".join([f"ID {uid} | Thêm bởi {by} | {created}" for uid,by,created in rows]) if rows else "Chưa có nhân viên phụ.")
+        buttons=[(f"🗑 GỠ QUYỀN ID {uid}",f"amsdel:{uid}") for uid,by,created in rows]
+        buttons.extend([("➕ THÊM NHÂN VIÊN","am:addstaff"),("⬅️ MENU QUẢN TRỊ","a:refresh")])
+        await c.message.edit_text(body,reply_markup=kb(buttons))
+    elif key=="addstaff":
+        if c.from_user.id not in ROOT_ADMINS:
+            return await c.answer("Chỉ Admin chủ mới được thêm nhân viên.",show_alert=True)
+        pending[c.from_user.id]={"admin_staff_add":True}
+        await c.message.edit_text("➕ THÊM NHÂN VIÊN ADMIN\\nNhập Telegram ID dạng số:",reply_markup=kb([("⬅️ QUAY LẠI","am:staff")]))
     await c.answer()
+
+@dp.callback_query(F.data.startswith("amsdel:"))
+async def admin_staff_delete(c: CallbackQuery):
+    if c.from_user.id not in ROOT_ADMINS:
+        return await c.answer("Chỉ Admin chủ mới được gỡ quyền.",show_alert=True)
+    target=int(c.data.split(":")[1])
+    if target in ROOT_ADMINS:
+        return await c.answer("Không thể gỡ Admin chủ.",show_alert=True)
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("DELETE FROM admin_staff WHERE user_id=?",(target,))
+        await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(c.from_user.id,f"remove admin staff {target}"))
+        await db.commit()
+    ADMINS.discard(target)
+    await c.answer("Đã gỡ quyền nhân viên.")
+    await c.message.edit_text("🧑‍💼 ĐÃ CẬP NHẬT DANH SÁCH NHÂN VIÊN.",reply_markup=kb([("👥 XEM DANH SÁCH","am:staff"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
 
 @dp.callback_query(F.data.startswith("amu:"))
 async def admin_user_detail(c: CallbackQuery):
@@ -745,6 +788,24 @@ async def process_admin_text(m: Message):
     uid=m.from_user.id
     task=pending.get(uid)
     if uid not in ADMINS: return False
+    if isinstance(task,dict) and task.get("admin_staff_add"):
+        raw=(m.text or "").strip()
+        if not raw.isdigit() or int(raw)<=0:
+            await m.answer("Telegram ID không hợp lệ. Vui lòng nhập ID dạng số.")
+            return True
+        target=int(raw)
+        if target in ROOT_ADMINS:
+            pending.pop(uid,None)
+            await m.answer("ID này đã là Admin chủ.")
+            return True
+        async with aiosqlite.connect(DB) as db:
+            await db.execute("INSERT OR IGNORE INTO admin_staff(user_id,added_by) VALUES(?,?)",(target,uid))
+            await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)",(uid,f"add admin staff {target}"))
+            await db.commit()
+        ADMINS.add(target)
+        pending.pop(uid,None)
+        await m.answer(f"✅ Đã cấp quyền Admin nhân viên cho ID {target}. Nhân viên có quyền quản trị bot; chỉ Admin chủ được thêm/gỡ quyền.",reply_markup=kb([("🧑‍💼 DANH SÁCH NHÂN VIÊN","am:staff"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
+        return True
     if isinstance(task,dict) and task.get("admin_user_search"):
         query=(m.text or "").strip()
         if not query:
