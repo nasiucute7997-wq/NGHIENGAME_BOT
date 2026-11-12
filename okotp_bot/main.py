@@ -59,6 +59,16 @@ async def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
             amount INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL)""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS saved_accounts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            alias TEXT NOT NULL, game TEXT NOT NULL, account_ref TEXT NOT NULL,
+            created_at TEXT NOT NULL, UNIQUE(user_id,alias))""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS captured_codes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            account_id INTEGER NOT NULL, game TEXT NOT NULL, code TEXT NOT NULL,
+            source_chat_id INTEGER, source_message_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'saved', created_at TEXT NOT NULL,
+            UNIQUE(user_id,code))""")
         await db.execute("""CREATE TABLE IF NOT EXISTS minigame_rooms(
             id INTEGER PRIMARY KEY AUTOINCREMENT, brand TEXT NOT NULL,
             title TEXT NOT NULL, starts_at TEXT NOT NULL,
@@ -130,6 +140,157 @@ async def send_orders(uid, send):
     for oid, name, price, status in rows:
         lines.append(f"#{oid} · {escape(name)} · {money(price)} · <b>{escape(status)}</b>")
     await send("\n".join(lines))
+
+
+def code_menu_kb(accounts, code):
+    kb = InlineKeyboardBuilder()
+    for aid, alias, game, account_ref in accounts:
+        kb.button(text=f"{alias} · {game}", callback_data=f"codeacct:{aid}:{code}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+@dp.message(Command("addaccount"))
+async def add_saved_account(m: Message):
+    await ensure_user(m.from_user)
+    parts = [x.strip() for x in (m.text or "").partition(" ")[2].split("|")]
+    if len(parts) != 3 or not all(parts):
+        await m.answer("Cú pháp: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\\nVí dụ: <code>/addaccount Acc chính|XX8|user123</code>\\nKhông nhập mật khẩu hoặc mã OTP.")
+        return
+    alias, game, account_ref = parts
+    if len(alias) > 40 or len(game) > 30 or len(account_ref) > 80:
+        await m.answer("Thông tin quá dài. Vui lòng rút gọn.")
+        return
+    async with await db_connect() as db:
+        try:
+            await db.execute("INSERT INTO saved_accounts(user_id,alias,game,account_ref,created_at) VALUES(?,?,?,?,?)",
+                             (m.from_user.id, alias, game.upper(), account_ref, now()))
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await m.answer("Tên gợi nhớ này đã tồn tại. Hãy chọn tên khác.")
+            return
+    await m.answer(f"✅ Đã lưu tài khoản <b>{escape(alias)}</b> · {escape(game.upper())} · <code>{escape(account_ref)}</code>.")
+
+@dp.message(Command("accounts"))
+async def list_saved_accounts(m: Message):
+    await ensure_user(m.from_user)
+    async with await db_connect() as db:
+        rows = await (await db.execute("SELECT id,alias,game,account_ref FROM saved_accounts WHERE user_id=? ORDER BY id DESC",
+                                       (m.from_user.id,))).fetchall()
+    if not rows:
+        await m.answer("Bạn chưa lưu tài khoản. Dùng /addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập")
+        return
+    lines = ["👤 <b>TÀI KHOẢN ĐÃ LƯU</b>"]
+    for aid, alias, game, ref in rows:
+        lines.append(f"#{aid} · {escape(alias)} · {escape(game)} · <code>{escape(ref)}</code>")
+    await m.answer("\\n".join(lines))
+
+def extract_code(text):
+    import re
+    if not text:
+        return None
+    # Chỉ nhận chuỗi được gắn nhãn CODE/MÃ/GIFT/VOUCHER để hạn chế quét nhầm.
+    patterns = [
+        r"(?i)(?:CODE|MÃ\\s*CODE|GIFT\\s*CODE|VOUCHER)\\s*[:：=\\-]?\\s*([A-Z0-9][A-Z0-9-]{5,31})",
+        r"(?i)(?:MÃ|CODE)\\s*[:：]\\s*([A-Z0-9][A-Z0-9-]{5,31})"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).upper()
+    return None
+
+@dp.message(Command("scan"))
+async def scan_telegram_message(m: Message):
+    await ensure_user(m.from_user)
+    source = m.reply_to_message
+    if not source:
+        await m.answer("Hãy trả lời (Reply) tin nhắn Telegram có mã rồi gửi /scan.")
+        return
+    body = source.text or source.caption or ""
+    code = extract_code(body)
+    if not code:
+        await m.answer("❌ Không tìm thấy mã theo định dạng có nhãn CODE/MÃ/GIFT/VOUCHER. Bạn có thể gửi lại tin nhắn kèm cú pháp CODE: ABC123.")
+        return
+    async with await db_connect() as db:
+        exists = await (await db.execute("SELECT id FROM captured_codes WHERE user_id=? AND code=?",
+                                         (m.from_user.id, code))).fetchone()
+        if exists:
+            await m.answer(f"⚠️ Mã <code>{escape(code)}</code> đã được lưu trước đó (#{exists[0]}).")
+            return
+        accounts = await (await db.execute("SELECT id,alias,game,account_ref FROM saved_accounts WHERE user_id=? ORDER BY id",
+                                           (m.from_user.id,))).fetchall()
+    if not accounts:
+        await m.answer("Bạn chưa có tài khoản lưu sẵn. Tạo bằng /addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập rồi quét lại.")
+        return
+    await m.answer(f"🔎 Phát hiện mã: <code>{escape(code)}</code>\\nChọn tài khoản muốn gắn mã:", reply_markup=code_menu_kb(accounts, code))
+
+@dp.callback_query(F.data.startswith("codeacct:"))
+async def choose_code_account(c: CallbackQuery):
+    if not c.message:
+        await c.answer()
+        return
+    try:
+        _, aid_text, code = c.data.split(":", 2)
+        aid = int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        account = await (await db.execute("SELECT alias,game,account_ref FROM saved_accounts WHERE id=? AND user_id=?",
+                                          (aid,c.from_user.id))).fetchone()
+    if not account:
+        await c.answer("Không tìm thấy tài khoản của bạn.", show_alert=True)
+        return
+    alias, game, account_ref = account
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Xác nhận lưu mã", callback_data=f"codesave:{aid}:{code}")
+    kb.button(text="❌ Hủy", callback_data="home")
+    kb.adjust(1)
+    await c.message.edit_text(
+        f"🔐 <b>XÁC NHẬN GẮN MÃ</b>\\nMã: <code>{escape(code)}</code>\\nGame: <b>{escape(game)}</b>\\nTài khoản: <b>{escape(alias)}</b> (<code>{escape(account_ref)}</code>)\\n\\nBot chỉ lưu mã vào danh sách của tài khoản; chưa tự đăng nhập hoặc đổi thưởng.",
+        reply_markup=kb.as_markup())
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("codesave:"))
+async def save_captured_code(c: CallbackQuery):
+    try:
+        _, aid_text, code = c.data.split(":", 2)
+        aid = int(aid_text)
+    except (ValueError, AttributeError):
+        await c.answer("Dữ liệu không hợp lệ.", show_alert=True)
+        return
+    async with await db_connect() as db:
+        account = await (await db.execute("SELECT game FROM saved_accounts WHERE id=? AND user_id=?",
+                                          (aid,c.from_user.id))).fetchone()
+        if not account:
+            await c.answer("Tài khoản không hợp lệ.", show_alert=True)
+            return
+        try:
+            cur = await db.execute(
+                "INSERT INTO captured_codes(user_id,account_id,game,code,source_chat_id,source_message_id,created_at) VALUES(?,?,?,?,?,?,?)",
+                (c.from_user.id,aid,account[0],code,None,None,now()))
+            code_id = cur.lastrowid
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await c.answer("Mã này đã được lưu rồi.", show_alert=True)
+            return
+    await c.message.edit_text(f"✅ Đã lưu mã #{code_id} vào tài khoản.\\nGame: <b>{escape(account[0])}</b>\\nMã: <code>{escape(code)}</code>\\nTrạng thái: <b>Đã lưu – chờ bạn tự đổi thưởng</b>.")
+    await c.answer("Đã lưu mã.")
+
+@dp.message(Command("mycodes"))
+async def list_my_codes(m: Message):
+    await ensure_user(m.from_user)
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT c.id,c.game,c.code,a.alias,c.status FROM captured_codes c JOIN saved_accounts a ON a.id=c.account_id WHERE c.user_id=? ORDER BY c.id DESC LIMIT 30",
+            (m.from_user.id,))).fetchall()
+    if not rows:
+        await m.answer("Chưa có mã nào được lưu.")
+        return
+    lines = ["🎟 <b>MÃ CODE ĐÃ LƯU</b>"]
+    for cid, game, code, alias, status in rows:
+        lines.append(f"#{cid} · {escape(game)} · {escape(alias)} · <code>{escape(code)}</code> · {escape(status)}")
+    await m.answer("\\n".join(lines))
 
 @dp.message(CommandStart())
 async def start(m: Message):
@@ -324,6 +485,26 @@ async def cb_deposit(c: CallbackQuery):
 async def cb_orders(c: CallbackQuery):
     await c.answer()
     await send_orders(c.from_user.id, c.message.answer)
+
+@dp.callback_query(F.data == "codes_help")
+async def cb_codes_help(c: CallbackQuery):
+    await c.message.edit_text("🎟 <b>QUÉT MÃ TỪ TELEGRAM</b>\\n1. Lưu tài khoản: <code>/addaccount Tên_gợi_nhớ|GAME|Tên_đăng_nhập</code>\\n2. Reply tin nhắn Telegram có mã rồi gửi <code>/scan</code>.\\n3. Chọn tài khoản và xác nhận lưu.\\n4. Xem mã bằng <code>/mycodes</code>.\\n\\nBot chỉ lưu mã và gắn vào tài khoản bạn chọn; không tự đăng nhập hoặc tự đổi thưởng.", reply_markup=back_kb())
+    await c.answer()
+
+@dp.callback_query(F.data == "mycodes")
+async def cb_my_codes(c: CallbackQuery):
+    await c.answer()
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT c.id,c.game,c.code,a.alias,c.status FROM captured_codes c JOIN saved_accounts a ON a.id=c.account_id WHERE c.user_id=? ORDER BY c.id DESC LIMIT 20",
+            (c.from_user.id,))).fetchall()
+    if not rows:
+        await c.message.answer("Chưa có mã nào được lưu. Dùng /mycodes để xem hướng dẫn.")
+        return
+    lines=["🎟 <b>MÃ CODE ĐÃ LƯU</b>"]
+    for cid,game,code,alias,status in rows:
+        lines.append(f"#{cid} · {escape(game)} · {escape(alias)} · <code>{escape(code)}</code> · {escape(status)}")
+    await c.message.answer("\\n".join(lines))
 
 @dp.callback_query(F.data == "guide")
 async def cb_guide(c: CallbackQuery):
