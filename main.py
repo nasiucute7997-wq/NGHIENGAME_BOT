@@ -570,7 +570,7 @@ async def start(m: Message):
 @dp.message(Command("menu"))
 async def menu(m: Message):
     await ensure_user(m.from_user)
-    await m.answer("🏠 <b>MENU CHÍNH</b>", reply_markup=home_kb(m.from_user.id))
+    await m.answer("🏠 <b>MENU CHÍNH</b>", reply_markup=await home_kb(m.from_user.id))
 
 @dp.message(Command("balance"))
 async def balance_cmd(m: Message):
