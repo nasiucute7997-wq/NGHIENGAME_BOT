@@ -102,7 +102,9 @@ def home_kb(uid):
         ("👤 Tài khoản", "account"),
         ("💳 Nạp tiền", "deposit"),
         ("📦 Lịch sử đơn", "orders"),
-        ("📖 Hướng dẫn", "guide"),\n        ("🎟 QUÉT & LƯU CODE", "codes_help"),\n        ("🎟 Mã đã lưu", "mycodes"),
+        ("📖 Hướng dẫn", "guide"),
+        ("🎟 QUÉT & LƯU CODE", "codes_help"),
+        ("🎟 Mã đã lưu", "mycodes"),
         ("☎️ Liên hệ Admin", "support"),
     ]:
         kb.button(text=label, callback_data=data)
