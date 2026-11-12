@@ -627,7 +627,19 @@ async def cb_codes_help(c: CallbackQuery):
 @dp.callback_query(F.data == "sourcecodes")
 async def cb_source_codes(c: CallbackQuery):
     await c.answer()
-    await list_source_codes(c.message)
+    async with await db_connect() as db:
+        rows = await (await db.execute(
+            "SELECT id,code,source_username FROM source_codes ORDER BY id DESC LIMIT 20")).fetchall()
+    if not rows:
+        await c.message.answer("Chưa phát hiện mã mới. Hãy thêm bot vào các kênh nguồn để bắt đầu quét.")
+        return
+    lines = ["🎟 <b>KHO CODE HI88 TỰ QUÉT</b>"]
+    kb = InlineKeyboardBuilder()
+    for cid, code, source in rows:
+        lines.append(f"#{cid} · <code>{escape(code)}</code> · @{escape(source)}")
+        kb.button(text=f"#{cid} · {code}", callback_data=f"srcpick:{cid}")
+    kb.adjust(1)
+    await c.message.answer("\\n".join(lines), reply_markup=kb.as_markup())
 
 @dp.callback_query(F.data == "mycodes")
 async def cb_my_codes(c: CallbackQuery):
