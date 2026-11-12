@@ -115,6 +115,9 @@ async def init_db():
             title TEXT NOT NULL, starts_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'open', result TEXT DEFAULT '',
             created_at TEXT NOT NULL)""")
+        room_columns = await (await db.execute("PRAGMA table_info(minigame_rooms)")).fetchall()
+        if "price" not in {row[1] for row in room_columns}:
+            await db.execute("ALTER TABLE minigame_rooms ADD COLUMN price INTEGER NOT NULL DEFAULT 0")
         await db.execute("""CREATE TABLE IF NOT EXISTS minigame_entries(
             id INTEGER PRIMARY KEY AUTOINCREMENT, room_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL, created_at TEXT NOT NULL,
@@ -194,7 +197,7 @@ def back_kb(target="home"):
 
 async def service_keyboard(category, game=None):
     async with await db_connect() as db:
-        if category == "GAME" and game:
+        if category in {"GAME", "MINIGAME"} and game:
             rows = await (await db.execute(
                 "SELECT id,name,price FROM services WHERE active=1 AND category=? AND (upper(game)=? OR game='') ORDER BY id",
                 (category, game))).fetchall()
@@ -204,8 +207,8 @@ async def service_keyboard(category, game=None):
                 (category,))).fetchall()
     kb = InlineKeyboardBuilder()
     for sid, name, price in rows:
-        callback = f"buy:{sid}:{game}" if category == "GAME" and game else f"buy:{sid}"
-        button_label = f"🛒 MUA HÀNG · {name} · {money(price)}" if category == "GAME" else f"{name} · {money(price)}"
+        callback = f"buy:{sid}:{game}" if category in {"GAME", "MINIGAME"} and game else f"buy:{sid}"
+        button_label = f"🛒 MUA HÀNG · {name} · {money(price)}" if category in {"GAME", "MINIGAME"} else f"{name} · {money(price)}"
         kb.button(text=button_label, callback_data=callback)
     kb.button(text="⬅️ Menu chính", callback_data="home")
     kb.adjust(1)
@@ -720,6 +723,9 @@ async def cb_brand(c: CallbackQuery):
             "SELECT id,title,starts_at,status FROM minigame_rooms WHERE brand=? ORDER BY id DESC LIMIT 10",
             (brand,))).fetchall()
     kb = InlineKeyboardBuilder()
+    _, products = await service_keyboard("MINIGAME", brand)
+    for sid, name, price in products:
+        kb.button(text=f"🛒 {name} · {money(price)}", callback_data=f"buy:{sid}:{brand}")
     for rid, title, starts, status in rooms:
         kb.button(text=f"#{rid} · {title} · {status}", callback_data=f"room:{rid}")
     kb.button(text="⬅️ Danh sách Minigame", callback_data="minigames")
@@ -729,7 +735,12 @@ async def cb_brand(c: CallbackQuery):
         lines.append("Lịch đặc biệt: Thứ 5")
     if brand == "QQ88":
         lines.append("Lịch đặc biệt: Thứ 6")
-    lines.append("Chưa có phòng được Admin tạo." if not rooms else "Chọn phòng để xem chi tiết.")
+    if products:
+        lines.append("Chọn sản phẩm Minigame để mua; nhập TÊN TK|4 SỐ CUỐI STK ở bước tiếp theo.")
+    elif not rooms:
+        lines.append("Chưa có sản phẩm hoặc phòng được Admin cấu hình.")
+    else:
+        lines.append("Chọn phòng để xem chi tiết.")
     await c.message.edit_text("\n".join(lines), reply_markup=kb.as_markup())
     await c.answer()
 
@@ -908,15 +919,14 @@ async def cb_buy(c: CallbackQuery):
         await c.answer("Mã sản phẩm không hợp lệ.", show_alert=True)
         return
     async with await db_connect() as db:
-        service = await (await db.execute(
-            "SELECT name,price,category,game FROM services WHERE id=? AND active=1", (sid,))).fetchone()
+        service = await (await db.execute("SELECT name,price,category,game FROM services WHERE id=? AND active=1", (sid,))).fetchone()
         if not service:
             await c.answer("Sản phẩm không còn hoạt động.", show_alert=True)
             return
         name, price, category, game = service
-        if category == "GAME":
+        if category in {"GAME", "MINIGAME"}:
             game = game or selected_game
-            if game not in GAME_SITES:
+            if game not in GAME_SITES and game not in {"HI88", "QQ88", "RR88", "XX88", "GG88"}:
                 await c.answer("Vui lòng chọn lại game.", show_alert=True)
                 return
         await db.execute(
@@ -924,11 +934,11 @@ async def cb_buy(c: CallbackQuery):
             "ON CONFLICT(user_id) DO UPDATE SET service_id=excluded.service_id,game=excluded.game,account_name='',created_at=excluded.created_at",
             (c.from_user.id, sid, game or category, "", now()))
         await db.commit()
+    prompt = ("✍️ Nhập theo cú pháp: <code>TÊN TK|4 SỐ CUỐI STK</code>\nVí dụ: <code>nghiencode123|6789</code>\nChỉ nhập 4 số cuối của STK đã liên kết với game; không gửi mật khẩu, OTP hoặc toàn bộ số tài khoản."
+              if category == "MINIGAME" else
+              "✍️ Vui lòng gửi <b>TÊN TÀI KHOẢN CẦN MUA</b>. Không gửi mật khẩu hoặc mã OTP.")
     await c.message.edit_text(
-        f"🧾 <b>ĐẶT MUA {escape(game or category)}</b>\n\n"
-        f"Sản phẩm: <b>{escape(name)}</b>\nGiá: <b>{money(price)}</b>\n\n"
-        "✍️ Vui lòng gửi <b>TÊN TÀI KHOẢN / THÔNG TIN NHẬN DỊCH VỤ</b>.\n"
-        "Không gửi mật khẩu hoặc mã OTP.",
+        f"🧾 <b>ĐẶT MUA {escape(game or category)}</b>\n\nSản phẩm: <b>{escape(name)}</b>\nGiá: <b>{money(price)}</b>\n\n{prompt}",
         reply_markup=back_kb("home"))
     await c.answer()
 
@@ -939,8 +949,7 @@ async def has_purchase_draft(m: Message) -> bool:
     async with await db_connect() as db:
         row = await (await db.execute(
             "SELECT 1 FROM purchase_drafts d JOIN services s ON s.id=d.service_id "
-            "WHERE d.user_id=? AND s.active=1 LIMIT 1",
-            (m.from_user.id,))).fetchone()
+            "WHERE d.user_id=? AND s.active=1 LIMIT 1", (m.from_user.id,))).fetchone()
     return row is not None
 
 
@@ -950,36 +959,42 @@ async def receive_purchase_account(m: Message):
         return
     await ensure_user(m.from_user)
     account_name = m.text.strip()
-    if not account_name or len(account_name) > 80 or "\n" in account_name:
-        return
     async with await db_connect() as db:
         draft = await (await db.execute(
-            "SELECT d.service_id,d.game,s.name,s.price FROM purchase_drafts d "
-            "JOIN services s ON s.id=d.service_id WHERE d.user_id=? AND s.active=1",
-            (m.from_user.id,))).fetchone()
+            "SELECT d.service_id,d.game,s.name,s.price,s.category FROM purchase_drafts d "
+            "JOIN services s ON s.id=d.service_id WHERE d.user_id=? AND s.active=1", (m.from_user.id,))).fetchone()
         if not draft:
             return
-        sid, game, name, price = draft
-        await db.execute("UPDATE purchase_drafts SET account_name=? WHERE user_id=?",
-                         (account_name, m.from_user.id))
+        sid, game, name, price, category = draft
+        if category == "MINIGAME":
+            import re
+            match = re.fullmatch(r"\s*([^|\n]{1,80})\s*\|\s*(\d{4})\s*", account_name)
+            if not match:
+                await m.answer("❌ Sai cú pháp. Nhập đúng: <code>TÊN TK|4 SỐ CUỐI STK</code>\nVí dụ: <code>nghiencode123|6789</code>")
+                return
+            account_name = f"{match.group(1).strip()}|{match.group(2)}"
+        elif not account_name or len(account_name) > 80 or "|" in account_name or "\n" in account_name:
+            await m.answer("Tên tài khoản không hợp lệ. Chỉ nhập tên tài khoản, không gửi mật khẩu/OTP.")
+            return
+        await db.execute("UPDATE purchase_drafts SET account_name=? WHERE user_id=?", (account_name, m.from_user.id))
         await db.commit()
-        balance_row = await (await db.execute(
-            "SELECT balance FROM users WHERE user_id=?", (m.from_user.id,))).fetchone()
-        balance = int(balance_row[0]) if balance_row else 0
+        row = await (await db.execute("SELECT balance FROM users WHERE user_id=?", (m.from_user.id,))).fetchone()
+        balance = int(row[0]) if row else 0
+    remaining = balance - int(price)
     kb = InlineKeyboardBuilder()
-    kb.button(text="📩 ĐẶT DỊCH VỤ", callback_data=f"buyconfirm:{sid}")
-    kb.button(text="✏️ SỬA TÊN TÀI KHOẢN", callback_data=f"buyedit:{sid}")
+    kb.button(text="✅ XÁC NHẬN THANH TOÁN", callback_data=f"buyconfirm:{sid}")
+    kb.button(text="✏️ SỬA THÔNG TIN", callback_data=f"buyedit:{sid}")
     kb.button(text="❌ HỦY ĐƠN", callback_data="buycancel")
     kb.adjust(1)
-    await m.answer(
-        f"📋 <b>XÁC NHẬN YÊU CẦU DỊCH VỤ</b>\\n\\n"
-        f"🎮 Site: <b>{escape(game)}</b>\\n"
-        f"📝 Dịch vụ: <b>{escape(name)}</b>\\n"
-        f"👤 Tài khoản: <code>{escape(account_name)}</code>\\n"
-        f"💰 Giá: <b>{money(price)}</b>\\n\\n"
-        "Bấm <b>ĐẶT DỊCH VỤ</b> để gửi yêu cầu đến ADMIN.\\n"
-        "Đơn chỉ được thực hiện sau khi ADMIN xác nhận.",
-        reply_markup=kb.as_markup())
+    label = "Tài khoản | 4 số cuối STK" if category == "MINIGAME" else "Tài khoản"
+    kind = "MINIGAME LIVE" if category == "MINIGAME" else "CODE GAME" if category == "GAME" else "DỊCH VỤ"
+    msg = (f"🧾 <b>XÁC NHẬN MUA {kind}</b>\n\n"
+           f"• Game: <b>{escape(game)}</b>\n• Sản phẩm: <b>{escape(name)}</b>\n"
+           f"• {label}: <code>{escape(account_name)}</code>\n• Giá: <b>{money(price)}</b>\n"
+           f"• Số dư: <b>{money(balance)}</b>\n• Còn lại: <b>{money(max(remaining, 0))}</b>\n\n")
+    msg += (f"⚠️ <b>Số dư không đủ.</b> Bạn còn thiếu {money(-remaining)}. Chưa trừ tiền, chưa tạo đơn thành công."
+            if remaining < 0 else "✅ <b>Đủ số dư – sẵn sàng thanh toán.</b>")
+    await m.answer(msg, reply_markup=kb.as_markup())
 
 
 @dp.callback_query(F.data == "buycancel")
@@ -987,7 +1002,7 @@ async def cb_buy_cancel(c: CallbackQuery):
     async with await db_connect() as db:
         await db.execute("DELETE FROM purchase_drafts WHERE user_id=?", (c.from_user.id,))
         await db.commit()
-    await c.message.edit_text("Đã hủy thao tác mua hàng.", reply_markup=back_kb())
+    await c.message.edit_text("Đã hủy thao tác mua hàng. Không trừ tiền.", reply_markup=back_kb())
     await c.answer("Đã hủy.")
 
 
@@ -1000,19 +1015,16 @@ async def cb_buy_edit(c: CallbackQuery):
         return
     async with await db_connect() as db:
         row = await (await db.execute(
-            "SELECT d.game,s.name,s.price FROM purchase_drafts d JOIN services s ON s.id=d.service_id "
-            "WHERE d.user_id=? AND d.service_id=? AND s.active=1",
-            (c.from_user.id, sid))).fetchone()
+            "SELECT d.game,s.name,s.price,s.category FROM purchase_drafts d JOIN services s ON s.id=d.service_id "
+            "WHERE d.user_id=? AND d.service_id=? AND s.active=1", (c.from_user.id, sid))).fetchone()
         if not row:
             await c.answer("Phiên đặt dịch vụ đã hết hạn.", show_alert=True)
             return
-        game, name, price = row
+        game, name, price, category = row
         await db.execute("UPDATE purchase_drafts SET account_name='' WHERE user_id=?", (c.from_user.id,))
         await db.commit()
-    await c.message.edit_text(
-        f"📝 <b>NHẬP LẠI TÀI KHOẢN</b>\\nSite: <b>{escape(game)}</b>\\n"
-        f"Dịch vụ: <b>{escape(name)}</b> · {money(price)}\\n\\n"
-        "Vui lòng gửi chính xác tên tài khoản cần sử dụng. Không gửi mật khẩu hoặc OTP.")
+    prompt = "TÊN TK|4 SỐ CUỐI STK (ví dụ: nghiencode123|6789)" if category == "MINIGAME" else "tên tài khoản cần mua"
+    await c.message.edit_text(f"📝 <b>NHẬP LẠI THÔNG TIN</b>\nGame: <b>{escape(game)}</b>\nSản phẩm: <b>{escape(name)}</b> · {money(price)}\n\nVui lòng gửi {prompt}. Không gửi mật khẩu hoặc OTP.")
     await c.answer()
 
 
@@ -1020,57 +1032,63 @@ async def cb_buy_edit(c: CallbackQuery):
 async def cb_buy_confirm(c: CallbackQuery):
     try:
         sid = int(c.data.split(":", 1)[1])
-    except ValueError:
+    except (ValueError, IndexError):
         await c.answer("Yêu cầu không hợp lệ.", show_alert=True)
         return
     async with await db_connect() as db:
         await db.execute("BEGIN IMMEDIATE")
         draft = await (await db.execute(
-            "SELECT d.game,d.account_name,s.name,s.price FROM purchase_drafts d "
+            "SELECT d.game,d.account_name,s.name,s.price,s.category FROM purchase_drafts d "
             "JOIN services s ON s.id=d.service_id WHERE d.user_id=? AND d.service_id=? AND s.active=1",
             (c.from_user.id, sid))).fetchone()
         if not draft or not draft[1]:
             await db.rollback()
-            await c.answer("Phiên đặt dịch vụ đã hết hạn. Vui lòng chọn lại.", show_alert=True)
+            await c.answer("Phiên mua đã hết hạn hoặc đã xử lý. Không thể thanh toán lần hai.", show_alert=True)
             return
-        game, account_name, name, price = draft
+        game, account_name, name, price, category = draft
+        row = await (await db.execute("SELECT balance FROM users WHERE user_id=?", (c.from_user.id,))).fetchone()
+        balance = int(row[0]) if row else 0
+        if balance < int(price):
+            await db.rollback()
+            await c.answer(f"Số dư không đủ. Bạn còn thiếu {money(int(price)-balance)}. Chưa trừ tiền.", show_alert=True)
+            return
+        debit = await db.execute("UPDATE users SET balance=balance-? WHERE user_id=? AND balance>=?",
+                                 (int(price), c.from_user.id, int(price)))
+        if debit.rowcount != 1:
+            await db.rollback()
+            await c.answer("Số dư vừa thay đổi. Vui lòng thử lại.", show_alert=True)
+            return
         cur = await db.execute(
             "INSERT INTO orders(user_id,service_id,service_name,price,status,created_at,game,account_name) "
             "VALUES(?,?,?,?,?,?,?,?)",
-            (c.from_user.id, sid, name, price, "pending_admin", now(), game, account_name))
+            (c.from_user.id, sid, name, int(price), "paid_pending_admin", now(), game, account_name))
         oid = cur.lastrowid
         await db.execute("DELETE FROM purchase_drafts WHERE user_id=?", (c.from_user.id,))
         await db.commit()
-
+        new_balance = balance - int(price)
     username = f"@{c.from_user.username}" if c.from_user.username else "Không có username"
     admin_kb = InlineKeyboardBuilder()
-    admin_kb.button(text="✅ ADMIN XÁC NHẬN", callback_data=f"orderapprove:{oid}")
-    admin_kb.button(text="❌ TỪ CHỐI", callback_data=f"orderreject:{oid}")
+    admin_kb.button(text="✅ ADMIN NHẬN XỬ LÝ", callback_data=f"orderapprove:{oid}")
+    admin_kb.button(text="❌ TỪ CHỐI & HOÀN TIỀN", callback_data=f"orderreject:{oid}")
     admin_kb.adjust(1)
-    admin_text = (
-        f"📥 <b>YÊU CẦU DỊCH VỤ MỚI #{oid}</b>\\n\\n"
-        f"Khách: {escape(c.from_user.full_name)} ({escape(username)})\\n"
-        f"Telegram ID: <code>{c.from_user.id}</code>\\n"
-        f"Site: <b>{escape(game)}</b>\\nDịch vụ: <b>{escape(name)}</b>\\n"
-        f"Tài khoản: <code>{escape(account_name)}</code>\\nGiá: <b>{money(price)}</b>\\n"
-        "Trạng thái: <b>Chờ ADMIN xác nhận</b>"
-    )
+    admin_text = (f"📥 <b>ĐƠN ĐÃ THANH TOÁN #{oid}</b>\n\nKhách: {escape(c.from_user.full_name)} ({escape(username)})\n"
+                  f"Telegram ID: <code>{c.from_user.id}</code>\nGame: <b>{escape(game)}</b>\nSản phẩm: <b>{escape(name)}</b>\n"
+                  f"Thông tin nhận: <code>{escape(account_name)}</code>\nGiá đã thu: <b>{money(price)}</b>\n"
+                  "Trạng thái: <b>Đã trừ tiền – chờ ADMIN xử lý</b>")
     sent = False
     for admin_id in ADMIN_IDS:
         try:
             await c.bot.send_message(admin_id, admin_text, reply_markup=admin_kb.as_markup())
             sent = True
         except Exception:
-            logging.exception("Cannot send service order to admin %s", admin_id)
+            logging.exception("Cannot send paid order to admin %s", admin_id)
     await c.message.edit_text(
-        f"📨 <b>ĐÃ GỬI YÊU CẦU ĐẾN ADMIN</b>\\n\\n"
-        f"Mã đơn: <b>#{oid}</b>\\nSite: <b>{escape(game)}</b>\\n"
-        f"Dịch vụ: <b>{escape(name)}</b>\\nTài khoản: <code>{escape(account_name)}</code>\\n"
-        f"Giá: <b>{money(price)}</b>\\n\\n"
-        + ("ADMIN sẽ xem và xác nhận trước khi thực hiện." if sent else
-           "Bot chưa gửi được thông báo cho ADMIN. Vui lòng liên hệ ADMIN trực tiếp; yêu cầu vẫn được lưu."),
+        f"✅ <b>THANH TOÁN THÀNH CÔNG</b>\nMã đơn: <b>#{oid}</b>\nGame: <b>{escape(game)}</b>\n"
+        f"Sản phẩm: <b>{escape(name)}</b>\nThông tin: <code>{escape(account_name)}</code>\n"
+        f"Đã thanh toán: <b>{money(price)}</b>\nSố dư còn lại: <b>{money(new_balance)}</b>\n"
+        + ("Đơn đang chờ ADMIN xử lý." if sent else "Đơn đã lưu; bot chưa gửi được thông báo ADMIN. Vui lòng liên hệ ADMIN."),
         reply_markup=back_kb())
-    await c.answer("Đã gửi yêu cầu.")
+    await c.answer("Thanh toán thành công.")
 
 
 async def admin_update_order(c: CallbackQuery, approved: bool):
@@ -1082,37 +1100,42 @@ async def admin_update_order(c: CallbackQuery, approved: bool):
     except (ValueError, IndexError):
         await c.answer("Mã đơn không hợp lệ.", show_alert=True)
         return
-    new_status = "admin_confirmed" if approved else "rejected"
     async with await db_connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
         row = await (await db.execute(
-            "SELECT user_id,game,service_name,price,account_name,status FROM orders WHERE id=?",
-            (oid,))).fetchone()
+            "SELECT user_id,game,service_name,price,account_name,status FROM orders WHERE id=?", (oid,))).fetchone()
         if not row:
+            await db.rollback()
             await c.answer("Không tìm thấy đơn.", show_alert=True)
             return
         uid, game, name, price, account_name, status = row
-        if status != "pending_admin":
-            await c.answer("Đơn này đã được xử lý trước đó.", show_alert=True)
-            return
+        if approved:
+            if status not in {"paid_pending_admin", "pending_admin"}:
+                await db.rollback()
+                await c.answer("Đơn này đã được xử lý trước đó.", show_alert=True)
+                return
+            new_status = "admin_confirmed"
+        else:
+            if status not in {"paid_pending_admin", "pending_admin", "admin_confirmed"}:
+                await db.rollback()
+                await c.answer("Đơn này đã được xử lý trước đó.", show_alert=True)
+                return
+            if status in {"paid_pending_admin", "admin_confirmed"}:
+                await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (int(price), uid))
+                new_status = "refunded"
+            else:
+                new_status = "rejected"
         await db.execute("UPDATE orders SET status=? WHERE id=?", (new_status, oid))
         await db.commit()
     try:
-        message = (
-            f"✅ <b>ADMIN ĐÃ XÁC NHẬN ĐƠN #{oid}</b>\\n"
-            f"Site: <b>{escape(game)}</b>\\nDịch vụ: <b>{escape(name)}</b>\\n"
-            f"Tài khoản: <code>{escape(account_name)}</code>\\n"
-            "Đơn đã được ADMIN xác nhận và chuyển sang bước thực hiện."
-            if approved else
-            f"❌ <b>ĐƠN #{oid} CHƯA ĐƯỢC CHẤP NHẬN</b>\\n"
-            "Vui lòng liên hệ ADMIN để biết thêm thông tin."
-        )
-        await c.bot.send_message(uid, message)
+        note = (f"✅ <b>ADMIN ĐÃ NHẬN XỬ LÝ ĐƠN #{oid}</b>\nĐơn đang được xử lý."
+                if approved else
+                f"❌ <b>ĐƠN #{oid} BỊ TỪ CHỐI</b>\n" +
+                (f"Đã hoàn {money(price)} vào số dư của bạn." if new_status == "refunded" else "Đơn chưa thu tiền nên không phát sinh hoàn tiền."))
+        await c.bot.send_message(uid, note)
     except Exception:
         logging.exception("Cannot notify customer for order %s", oid)
-    await c.message.edit_text(
-        f"{'✅ ĐÃ XÁC NHẬN' if approved else '❌ ĐÃ TỪ CHỐI'} ĐƠN #{oid}\\n"
-        f"Site: {escape(game)} · {escape(name)}\\nTài khoản: <code>{escape(account_name)}</code>\\n"
-        f"Giá: {money(price)} · Trạng thái: {new_status}")
+    await c.message.edit_text(f"{'✅ ĐÃ NHẬN XỬ LÝ' if approved else '❌ ĐÃ TỪ CHỐI'} ĐƠN #{oid}\nGame: {escape(game)} · {escape(name)}\nThông tin: <code>{escape(account_name)}</code>\nGiá: {money(price)} · Trạng thái: {new_status}")
     await c.answer("Đã cập nhật đơn.")
 
 
@@ -1126,17 +1149,48 @@ async def cb_order_reject(c: CallbackQuery):
     await admin_update_order(c, False)
 
 
+@dp.message(Command("refund"))
+async def refund_paid_order(m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    parts = (m.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await m.answer("Cú pháp: <code>/refund ID</code> – chỉ dùng sau khi đối soát đơn lỗi.")
+        return
+    oid = int(parts[1])
+    async with await db_connect() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        row = await (await db.execute("SELECT user_id,price,status FROM orders WHERE id=?", (oid,))).fetchone()
+        if not row:
+            await db.rollback()
+            await m.answer("Không tìm thấy đơn.")
+            return
+        uid, price, status = row
+        if status not in {"paid_pending_admin", "admin_confirmed"}:
+            await db.rollback()
+            await m.answer(f"Đơn đang ở trạng thái {status}; không thể hoàn tiền lần nữa.")
+            return
+        await db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (int(price), uid))
+        await db.execute("UPDATE orders SET status='refunded' WHERE id=?", (oid,))
+        await db.commit()
+    await m.answer(f"✅ Đã hoàn {money(price)} cho đơn #{oid} sau đối soát.")
+    try:
+        await m.bot.send_message(uid, f"↩️ Đơn #{oid} gặp lỗi sau đối soát. Bot đã hoàn {money(price)} vào số dư của bạn.")
+    except Exception:
+        logging.exception("Cannot notify refunded customer %s", uid)
+
+
 @dp.message(Command("addservice"))
 async def add_service(m: Message):
     if not is_admin(m.from_user.id):
         return
     raw = (m.text or "").partition(" ")[2]
     parts = [x.strip() for x in raw.split("|")]
-    if not parts or parts[0].upper() not in {"GAME", "SMS", "PRX"}:
+    if not parts or parts[0].upper() not in {"GAME", "MINIGAME", "SMS", "PRX"}:
         await m.answer("Danh mục phải là GAME, SMS hoặc PRX.")
         return
     category = parts[0].upper()
-    if category == "GAME" and len(parts) == 4:
+    if category in {"GAME", "MINIGAME"} and len(parts) == 4:
         game, name, price_text = parts[1].upper(), parts[2], parts[3]
         if game not in GAME_SITES:
             await m.answer("Tên game không hợp lệ. Hãy dùng site có trong danh sách bot.")
@@ -1144,7 +1198,7 @@ async def add_service(m: Message):
     elif len(parts) == 3:
         game, name, price_text = "", parts[1], parts[2]
     else:
-        await m.answer("Cú pháp: <code>/addservice GAME|SITE|Tên dịch vụ|Giá</code> hoặc <code>/addservice SMS|Tên|Giá</code>.")
+        await m.answer("Cú pháp: <code>/addservice GAME|SITE|Tên|Giá</code>, <code>/addservice MINIGAME|SITE|Tên phòng/sản phẩm|Giá</code>, hoặc <code>/addservice SMS|Tên|Giá</code>.")
         return
     if not name or not price_text.isdigit() or int(price_text) <= 0:
         await m.answer("Tên dịch vụ hoặc giá không hợp lệ.")
