@@ -248,7 +248,7 @@ async def start(m: Message):
             cur=await db.execute("SELECT blocked FROM users WHERE id=?",(m.from_user.id,)); blocked=(await cur.fetchone())[0]
         if blocked:
             return await m.answer("🚫 Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Admin.")
-    await m.answer(f"🏮 NGHIỆN CODE GAME 🏮\n\n🔥 CHÀO MỪNG BẠN ĐẾN VỚI HỆ THỐNG 🔥\n\nXin chào, {m.from_user.full_name}!\nCODE GAME · MINIGAME · DỊCH VỤ · ƯU ĐÃI\n\nChọn danh mục bên dưới:",reply_markup=await home_kb(m.from_user.id in ADMINS))
+    await m.answer(f"🏮🏮🏮🏮\n\n🔥 Xin chào, {m.from_user.full_name}!\n\n👥 Chào mừng đến NGHIỆN CODE.\nChọn dịch vụ bên dưới:",reply_markup=await home_kb(m.from_user.id in ADMINS))
 
 @dp.message(Command("admin"))
 async def admin(m: Message):
