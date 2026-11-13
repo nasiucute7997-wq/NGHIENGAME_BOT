@@ -292,19 +292,14 @@ async def start(m: Message):
     date_text = f"{weekdays[now.weekday()]}, ngày {now:%d/%m/%Y}"
     time_text = now.strftime("%H:%M:%S")
     welcome = (
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌟🎉 XIN CHÀO, {m.from_user.full_name}! 🎉🌟\n"
-        "💎 CHÀO MỪNG BẠN ĐẾN VỚI NGHIỆN CODE 💎\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌟🎉 XIN CHÀO, 𖣸𝓑𝓮 𝓷𝓲 ༘ [ẩn]! 🎉🌟\n"
+        "💎 CHÀO MỪNG ĐẾN VỚI NGHIỆN CODE 💎\n"
         f"📅 HÔM NAY: {date_text}\n"
-        f"⏰ THỜI GIAN: {time_text} (GMT+7)\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⏰ THỜI GIAN: {time_text} (GMT+7)\n\n"
         "🎮 CODE GAME HOT – MINIGAME LIVE\n"
-        "⚡ GIAO DỊCH NHANH – THAO TÁC TIỆN LỢI\n"
-        "🤖 HỆ THỐNG TỰ ĐỘNG – HỖ TRỢ 24/7\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🚀 BẠN MUỐN SỬ DỤNG DỊCH VỤ NÀO? 👇\n"
-        "Vui lòng chọn chức năng bên dưới để tiếp tục."
+        "⚡ GIAO DỊCH NHANH – TIỆN LỢI\n"
+        "🤖 HỖ TRỢ TỰ ĐỘNG 24/7\n\n"
+        "🚀 VUI LÒNG CHỌN DỊCH VỤ BÊN DƯỚI! 👇"
     )
     await m.answer(welcome,reply_markup=await home_kb(m.from_user.id in ADMINS))
 
