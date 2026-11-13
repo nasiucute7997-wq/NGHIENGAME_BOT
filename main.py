@@ -68,6 +68,27 @@ async def init_db():
             for game_name, label in [("XX8", "XX8 LIVE"), ("U888", "U888 LIVE"), ("88CLB", "88CLB LIVE")]:
                 await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder_label:mini_{game_name}", label))
             await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('migration:minigame_live_labels_v3','1')")
+        # Cập nhật nội dung hướng dẫn ngắn gọn cho toàn bộ sản phẩm MINIGAME LIVE.
+        common_rules = (
+            "\\n\\n👤 NHẬP TÊN TÀI KHOẢN GAME:\\n"
+            "• Mỗi dòng 01 tài khoản.\\n"
+            "Ví dụ:\\nabcxyz\\nnguyenvana"
+            "\\n\\n⚠️ ĐIỀU KIỆN:\\n"
+            "• Tài khoản phải có lịch sử nạp trên 500.000đ trong 07 ngày trước khi mua.\\n"
+            "• Không đủ điều kiện nạp sẽ không được nhận thưởng.\\n"
+            "• Không nhận đủ điểm, liên hệ CSKH để kiểm tra và hoàn tiền.\\n\\n"
+            "❗ Vui lòng kiểm tra kỹ tài khoản và điều kiện trước khi đặt mua!"
+        )
+        minigame_descriptions = {
+            "XX8": "Nhận đủ 250 điểm theo combo." + common_rules,
+            "88CLB": "Nhận đủ 174 điểm theo combo." + common_rules,
+            "U888": "Nhận CODE ngẫu nhiên 118–288 điểm theo combo (không được lựa chọn mức điểm)." + common_rules,
+        }
+        for game_name, description in minigame_descriptions.items():
+            await db.execute(
+                "UPDATE products SET description=? WHERE category='MINIGAME LIVE' AND game=?",
+                (description, game_name)
+            )
         defaults = [
             ("SHARE","","SHARE QQ88",50000,"Chương trình CODE SHARE QQ88"),
             ("SHARE","","SHARE HI88",60000,"Chương trình CODE SHARE HI88"),
