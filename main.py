@@ -154,7 +154,7 @@ async def admin_kb():
     return b.as_markup()
 
 CHILD_FOLDER_KEYS = {
-    "home_code": ["home_codegame", "home_mini", "home_share"],
+    "home_code": [*[f"game_{g}" for g in GAMES], "mini_XX8", "mini_AD88", "mini_U888", "mini_88CLB", "share_QQ88", "share_HI88"],
     "home_services": ["service_sms_receive", "service_sms_send", "service_proxy"],
     "home_codegame": [f"game_{g}" for g in GAMES],
     "home_mini": ["mini_XX8", "mini_AD88", "mini_U888", "mini_88CLB"],
