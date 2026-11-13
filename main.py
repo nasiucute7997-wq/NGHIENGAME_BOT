@@ -205,7 +205,6 @@ async def folders_kb():
         if await folder_is_on(key):
             shown = await folder_label(key, default_label)
             b.button(text=shown[:64], callback_data=f"afchildren:{key}")
-    b.button(text="➕ THÊM SITE GAME", callback_data="afaddsite")
     b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
     b.button(text="⬅️ QUAY LẠI MENU ADMIN", callback_data="a:refresh")
     b.adjust(2)
@@ -219,6 +218,8 @@ async def child_folders_kb(parent):
         enabled = await folder_is_on(key)
         shown = await folder_label(key, label)
         b.button(text=f"🎮 {shown}"[:64], callback_data=f"afselect:{key}")
+    if parent == "home_mini":
+        b.button(text="➕ THÊM SITE GAME", callback_data="afaddminisite")
     b.button(text="🔄 TẢI LẠI", callback_data=f"afchildren:{parent}")
     b.button(text="⬅️ QUAY LẠI THƯ MỤC CHÍNH", callback_data="a:folders")
     b.adjust(1)
@@ -745,6 +746,17 @@ async def admin_select_folder_for_config(c: CallbackQuery):
         await c.message.edit_text(f"📂 {title}\\n\\nDanh sách sản phẩm/site đã có. Chọn mục cần chỉnh sửa:", reply_markup=kb2(buttons))
     else:
         await c.message.edit_text(f"⚙️ CÀI ĐẶT {title}\\nChọn nội dung cần chỉnh sửa:", reply_markup=await folder_config_kb(key))
+    await c.answer()
+
+@dp.callback_query(F.data == "afaddminisite")
+async def admin_add_minigame_site_start(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    pending[c.from_user.id] = {"admin_new_site_name": True, "category": "MINIGAME LIVE"}
+    await c.message.edit_text(
+        "➕ THÊM SITE GAME MỚI\nDanh mục: 🎯 MINIGAME LIVE\n\nNhập tên SITE GAME mới:",
+        reply_markup=kb([("⬅️ QUAY LẠI MINIGAME LIVE", "afchildren:home_mini")])
+    )
     await c.answer()
 
 @dp.callback_query(F.data == "afaddsite")
