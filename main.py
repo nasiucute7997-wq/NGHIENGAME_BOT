@@ -60,6 +60,11 @@ async def init_db():
                 await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",
                                  ("MINIGAME LIVE", game_name, product_name, price, descriptions[game_name]))
             await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('migration:minigame_live_products_v2','1')")
+        cur = await db.execute("SELECT value FROM settings WHERE key='migration:minigame_live_labels_v3'")
+        if not await cur.fetchone():
+            for game_name, label in [("XX8", "XX8 LIVE"), ("U888", "U888 LIVE"), ("88CLB", "88CLB LIVE")]:
+                await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder_label:mini_{game_name}", label))
+            await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('migration:minigame_live_labels_v3','1')")
         defaults = [
             ("SHARE","","SHARE QQ88",50000,"Chương trình CODE SHARE QQ88"),
             ("SHARE","","SHARE HI88",60000,"Chương trình CODE SHARE HI88"),
@@ -95,9 +100,9 @@ FOLDER_DEFS = [
     ("home_orders", "📋 LỊCH SỬ ĐƠN", "Thư mục khách hàng"),
     ("home_contact", "📞 LIÊN HỆ ADMIN", "Thư mục khách hàng"),
     ("home_houses", "🏦 HỆ THỐNG NHÀ CÁI", "Thư mục khách hàng"),
-    ("mini_XX8", "🎯 MINIGAME XX8", "Chi tiết Minigame"),
-    ("mini_88CLB", "🎯 MINIGAME 88CLB", "Chi tiết Minigame"),
-    ("mini_U888", "🎯 MINIGAME U888", "Chi tiết Minigame"),
+    ("mini_XX8", "XX8 LIVE", "Chi tiết Minigame"),
+    ("mini_U888", "U888 LIVE", "Chi tiết Minigame"),
+    ("mini_88CLB", "88CLB LIVE", "Chi tiết Minigame"),
     ("share_QQ88", "🔗 CODE SHARE QQ88", "Chi tiết CODE SHARE"),
     ("share_HI88", "🔗 CODE SHARE HI88", "Chi tiết CODE SHARE"),
     ("admin_add", "➕ THÊM SẢN PHẨM", "Thư mục quản trị"),
@@ -175,7 +180,7 @@ CHILD_FOLDER_KEYS = {
     "home_code": ["home_codegame", "home_mini", "home_share"],
     "home_services": ["service_sms_receive", "service_sms_send", "service_proxy"],
     "home_codegame": [f"game_{g}" for g in GAMES],
-    "home_mini": ["mini_XX8", "mini_88CLB", "mini_U888"],
+    "home_mini": ["mini_XX8", "mini_U888", "mini_88CLB"],
     "home_share": ["share_QQ88", "share_HI88"],
 }
 
@@ -356,9 +361,9 @@ async def menus(c: CallbackQuery):
         await c.message.edit_text((await folder_label("home_codegame","🎮 CODE GAME"))+"\n\nChọn game:",reply_markup=kb2(game_rows+[("⬅️ QUAY LẠI","m:code")]))
     elif key=="mini":
         mini_rows=[]
-        for g in ["XX8","88CLB","U888"]:
+        for g in ["XX8","U888","88CLB"]:
             if await folder_is_on(f"mini_{g}"):
-                mini_rows.append((await folder_label(f"mini_{g}",f"🎯 MINIGAME {g}"),f"miniitem:{g}"))
+                mini_rows.append((await folder_label(f"mini_{g}",f"{g} LIVE"),f"miniitem:{g}"))
         mini_rows.append(("⬅️ QUAY LẠI","m:code"))
         await c.message.edit_text(await folder_label("home_mini","🎯 MINIGAME LIVE"),reply_markup=kb2(mini_rows))
     elif key=="share":
