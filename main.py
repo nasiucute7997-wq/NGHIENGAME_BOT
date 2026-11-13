@@ -630,18 +630,23 @@ async def capture_purchase_account(m: Message):
     task["purchase_confirm"] = True
     pending[m.from_user.id] = task
     site = task.get("game") or task.get("category") or "CODE GAME"
-    await m.answer(
-        "📋 **XÁC NHẬN ĐƠN HÀNG**\\n"
-        f"🎮 **SITE GAME:** {site}\\n"
-        f"📦 **SẢN PHẨM:** {task['name']}\\n"
-        f"👤 **TÀI KHOẢN:** {account}\\n\\n"
-        f"💰 **TỔNG THANH TOÁN:** {task['price']:,}đ\\n"
-        f"📦 **SỐ LƯỢNG:** {task.get('quantity',1)}\\n"
-        f"💵 **ĐƠN GIÁ:** {task['unit_price']:,}đ\\n"
+    import html
+    confirmation = (
+        "📋 <b>XÁC NHẬN ĐƠN HÀNG</b>\\n"
+        f"🎮 <b>SITE GAME:</b> {html.escape(str(site))}\\n"
+        f"📦 <b>SẢN PHẨM:</b> {html.escape(str(task['name']))}\\n"
+        f"👤 <b>TÀI KHOẢN:</b> {html.escape(str(account))}\\n\\n"
+        f"💰 <b>TỔNG THANH TOÁN:</b> {task['price']:,}đ\\n"
+        f"📦 <b>SỐ LƯỢNG:</b> {task.get('quantity',1)}\\n"
+        f"💵 <b>ĐƠN GIÁ:</b> {task['unit_price']:,}đ\\n"
         "⚠️ Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.\\n"
         "✅ Hệ thống sẽ kiểm tra số dư và chỉ trừ tiền khi đủ số dư.\\n"
         "✅ Thanh toán thành công sẽ hiển thị mã đơn hàng.\\n"
-        "❗ Sai thông tin? Chọn **QUAY LẠI** để chỉnh sửa.",
+        "❗ Sai thông tin? Chọn <b>QUAY LẠI</b> để chỉnh sửa."
+    )
+    await m.answer(
+        confirmation,
+        parse_mode="HTML",
         reply_markup=kb([
             ("✅ XÁC NHẬN THANH TOÁN", "buyact:confirm"),
             ("✏️ QUAY LẠI CHỈNH SỬA", "buyact:back"),
