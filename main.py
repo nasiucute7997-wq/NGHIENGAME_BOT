@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -73,6 +74,16 @@ async def init_db():
             cur = await db.execute("SELECT id FROM products WHERE category=? AND game=? AND name=? LIMIT 1",(cat,game_name,name))
             if not await cur.fetchone():
                 await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",(cat,game_name,name,price,desc))
+        cur = await db.execute("SELECT key,value FROM settings WHERE key LIKE 'custom_site:%' ORDER BY key")
+        for setting_key, site_name in await cur.fetchall():
+            folder_key = setting_key.split(":", 1)[1]
+            parent = "home_codegame" if folder_key.startswith("game_") else "home_mini" if folder_key.startswith("mini_") else None
+            if not parent:
+                continue
+            if folder_key not in {item[0] for item in FOLDER_DEFS}:
+                FOLDER_DEFS.append((folder_key, site_name, "Site game do Admin tạo"))
+            if folder_key not in CHILD_FOLDER_KEYS.setdefault(parent, []):
+                CHILD_FOLDER_KEYS[parent].append(folder_key)
         await db.commit()
     async with aiosqlite.connect(DB) as db:
         cur = await db.execute("SELECT user_id FROM admin_staff")
@@ -194,6 +205,7 @@ async def folders_kb():
         if await folder_is_on(key):
             shown = await folder_label(key, default_label)
             b.button(text=shown[:64], callback_data=f"afchildren:{key}")
+    b.button(text="➕ THÊM SITE GAME", callback_data="afaddsite")
     b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
     b.button(text="⬅️ QUAY LẠI MENU ADMIN", callback_data="a:refresh")
     b.adjust(2)
@@ -357,13 +369,18 @@ async def menus(c: CallbackQuery):
         rows.append(("⬅️ MENU CHÍNH","m:home"))
         await c.message.edit_text((await folder_label("home_code","🚀 CODE"))+"\n\nChọn danh mục:",reply_markup=kb2(rows))
     elif key=="codegame":
-        game_rows=[(await folder_label(f"game_{g}",g),f"game:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]
-        await c.message.edit_text((await folder_label("home_codegame","🎮 CODE GAME"))+"\n\nChọn game:",reply_markup=kb2(game_rows+[("⬅️ QUAY LẠI","m:code")]))
+        game_rows=[]
+        for folder_key in CHILD_FOLDER_KEYS.get("home_codegame", []):
+            if await folder_is_on(folder_key):
+                game_name = folder_key[5:]
+                game_rows.append((await folder_label(folder_key, game_name), f"game:{game_name}"))
+        await c.message.edit_text((await folder_label("home_codegame","🎮 CODE GAME"))+"\\n\\nChọn game:",reply_markup=kb2(game_rows+[("⬅️ QUAY LẠI","m:code")]))
     elif key=="mini":
         mini_rows=[]
-        for g in ["XX8","U888","88CLB"]:
-            if await folder_is_on(f"mini_{g}"):
-                mini_rows.append((await folder_label(f"mini_{g}",f"{g} LIVE"),f"miniitem:{g}"))
+        for folder_key in CHILD_FOLDER_KEYS.get("home_mini", []):
+            if await folder_is_on(folder_key):
+                game_name = folder_key[5:]
+                mini_rows.append((await folder_label(folder_key,f"{game_name} LIVE"),f"miniitem:{game_name}"))
         mini_rows.append(("⬅️ QUAY LẠI","m:code"))
         await c.message.edit_text(await folder_label("home_mini","🎯 MINIGAME LIVE"),reply_markup=kb2(mini_rows))
     elif key=="share":
@@ -438,7 +455,7 @@ async def share_item(c: CallbackQuery):
 @dp.callback_query(F.data.startswith("miniitem:"))
 async def minigame_item(c: CallbackQuery):
     game_name=c.data.split(":",1)[1]
-    if game_name not in {"XX8","U888","88CLB"}:
+    if f"mini_{game_name}" not in {item[0] for item in FOLDER_DEFS}:
         return await c.answer("Danh mục không hợp lệ.",show_alert=True)
     if not await folder_is_on(f"mini_{game_name}"):
         return await c.answer("Thư mục minigame này hiện đang tắt.",show_alert=True)
@@ -483,6 +500,22 @@ async def capture_purchase_account(m: Message):
     task = pending.get(m.from_user.id)
     if m.from_user.id in ADMINS and isinstance(task, dict):
         raw = (m.text or "").strip()
+        if task.get("admin_new_site_name"):
+            if not raw or len(raw) > 40:
+                return await m.answer("Tên SITE GAME không hợp lệ. Nhập từ 1–40 ký tự.")
+            category = task.get("category")
+            if category not in {"GAME", "MINIGAME LIVE"}:
+                pending.pop(m.from_user.id, None)
+                return await m.answer("Danh mục không hợp lệ. Vui lòng thao tác lại.")
+            prefix = "game_" if category == "GAME" else "mini_"
+            slug = hashlib.sha1(raw.casefold().encode("utf-8")).hexdigest()[:12]
+            folder_key = prefix + slug
+            if folder_key in {item[0] for item in FOLDER_DEFS}:
+                pending.pop(m.from_user.id, None)
+                return await m.answer("SITE GAME này đã tồn tại hoặc trùng tên.")
+            task.update({"new_site_key": folder_key, "new_site_name": raw, "draft_kind": "new_site"})
+            pending[m.from_user.id] = task
+            return await m.answer(f"📋 XÁC NHẬN TẠO SITE GAME\\n\\nDanh mục: {category}\\nTên SITE: {raw}\\n\\nBạn xác nhận tạo thư mục này?", reply_markup=kb([("✅ XÁC NHẬN TẠO", "afsiteconfirm:yes"), ("❌ HỦY", "afsiteconfirm:no")]))
         if "folder_label_edit" in task:
             if not raw or len(raw) > 60:
                 return await m.answer("Tên hiển thị không hợp lệ. Nhập tối đa 60 ký tự.")
@@ -637,6 +670,33 @@ async def folder_config_kb(key):
     b.adjust(2)
     return b.as_markup()
 
+@dp.callback_query(F.data.startswith("afsiteconfirm:"))
+async def admin_add_site_confirm(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    task = pending.get(c.from_user.id)
+    action = c.data.split(":", 1)[1]
+    if not isinstance(task, dict) or task.get("draft_kind") != "new_site" or action not in {"yes", "no"}:
+        return await c.answer("Phiên tạo SITE GAME đã hết hạn.", show_alert=True)
+    if action == "yes":
+        key, name, category = task["new_site_key"], task["new_site_name"], task["category"]
+        parent = "home_codegame" if category == "GAME" else "home_mini"
+        async with aiosqlite.connect(DB) as db:
+            await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"custom_site:{key}", name))
+            await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder_label:{key}", name))
+            await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)", (c.from_user.id, f"create site {category}/{name}"))
+            await db.commit()
+        if key not in {item[0] for item in FOLDER_DEFS}:
+            FOLDER_DEFS.append((key, name, "Site game do Admin tạo"))
+        if key not in CHILD_FOLDER_KEYS.setdefault(parent, []):
+            CHILD_FOLDER_KEYS[parent].append(key)
+        result = f"✅ ĐÃ TẠO SITE GAME\\n\\nDanh mục: {category}\\nTên SITE: {name}\\n\\nBạn có thể vào Quản lý thư mục để bật/tắt, đổi tên và thêm sản phẩm."
+    else:
+        result = "❌ Đã hủy. Không tạo SITE GAME mới."
+    pending.pop(c.from_user.id, None)
+    await c.message.edit_text(result, reply_markup=kb([("⚙️ QUẢN LÝ THƯ MỤC", "a:folders"), ("⬅️ MENU QUẢN TRỊ", "a:refresh")]))
+    await c.answer("Đã lưu." if action == "yes" else "Đã hủy.")
+
 @dp.callback_query(F.data.startswith("afchildren:"))
 async def admin_child_folders(c: CallbackQuery):
     if c.from_user.id not in ADMINS:
@@ -676,8 +736,8 @@ async def admin_select_folder_for_config(c: CallbackQuery):
                 cur = await db.execute("SELECT id,name,price,active FROM products WHERE category=? ORDER BY id", (category,))
             products = await cur.fetchall()
         buttons = [(f"📦 {name} · {price:,}đ {'🟢' if active else '🔴'}", f"afproduct:{pid}:{key}") for pid,name,price,active in products]
-        if key.startswith("mini_"):
-            buttons.append(("➕ THÊM SẢN PHẨM", f"afaddmini:{game}"))
+        if key.startswith("mini_") or key.startswith("game_"):
+            buttons.append(("➕ THÊM SẢN PHẨM", f"afaddsiteproduct:{key}"))
         if not products:
             buttons.append(("⚙️ CÀI ĐẶT TÊN THƯ MỤC", f"afe:{key}"))
         parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), "home_code")
@@ -687,18 +747,38 @@ async def admin_select_folder_for_config(c: CallbackQuery):
         await c.message.edit_text(f"⚙️ CÀI ĐẶT {title}\\nChọn nội dung cần chỉnh sửa:", reply_markup=await folder_config_kb(key))
     await c.answer()
 
-@dp.callback_query(F.data.startswith("afaddmini:"))
-async def admin_add_product_from_minigame_folder(c: CallbackQuery):
+@dp.callback_query(F.data == "afaddsite")
+async def admin_add_site_start(c: CallbackQuery):
     if c.from_user.id not in ADMINS:
         return await c.answer("Không có quyền.", show_alert=True)
-    game_name = c.data.split(":", 1)[1]
-    if game_name not in {"XX8", "U888", "88CLB"}:
-        return await c.answer("Minigame không hợp lệ.", show_alert=True)
-    pending[c.from_user.id] = {"add_stage": "name", "category": "MINIGAME LIVE", "game": game_name}
-    await c.message.edit_text(
-        f"➕ THÊM SẢN PHẨM\\nDanh mục: MINIGAME LIVE\\nGame/site: {game_name}\\nNhập tên sản phẩm:",
-        reply_markup=kb([("⬅️ QUAY LẠI DANH SÁCH SẢN PHẨM", f"afselect:mini_{game_name}")])
-    )
+    await c.message.edit_text("➕ THÊM SITE GAME MỚI\\n\\nChọn thư mục muốn tạo site:", reply_markup=kb([
+        ("🎮 CODE GAME", "afsitecat:GAME"), ("🎯 MINIGAME LIVE", "afsitecat:MINIGAME LIVE"), ("⬅️ QUẢN LÝ THƯ MỤC", "a:folders")
+    ]))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("afsitecat:"))
+async def admin_add_site_choose_category(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    category = c.data.split(":", 1)[1]
+    if category not in {"GAME", "MINIGAME LIVE"}:
+        return await c.answer("Danh mục không hợp lệ.", show_alert=True)
+    pending[c.from_user.id] = {"admin_new_site_name": True, "category": category}
+    await c.message.edit_text(f"➕ THÊM SITE GAME\\nDanh mục: {category}\\n\\nNhập tên SITE GAME mới:", reply_markup=kb([("⬅️ HỦY", "a:folders")]))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("afaddsiteproduct:"))
+async def admin_add_product_from_site(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    key = c.data.split(":", 1)[1]
+    if key not in {item[0] for item in FOLDER_DEFS} or not (key.startswith("game_") or key.startswith("mini_")):
+        return await c.answer("SITE GAME không hợp lệ.", show_alert=True)
+    category, game_name = await folder_config_products(key)
+    if not category or not game_name:
+        return await c.answer("Không xác định được SITE GAME.", show_alert=True)
+    pending[c.from_user.id] = {"add_stage": "name", "category": category, "game": game_name}
+    await c.message.edit_text(f"➕ THÊM SẢN PHẨM\\nDanh mục: {category}\\nGame/site: {game_name}\\nNhập tên sản phẩm:", reply_markup=kb([("⬅️ QUAY LẠI SITE", f"afselect:{key}")]))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("afproduct:"))
