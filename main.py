@@ -1046,3 +1046,17 @@ async def admin_product_edit_field(c: CallbackQuery):
 @dp.callback_query(F.data.startswith("apdel:"))
 async def admin_product_delete_prompt(c: CallbackQuery):
     if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
+
+async def main():
+    await init_db()
+    bot = Bot(token=TOKEN)
+    me = await bot.get_me()
+    logging.info("Starting @%s id=%s", me.username, me.id)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Bot stopped by keyboard interrupt")
