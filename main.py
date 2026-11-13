@@ -408,7 +408,7 @@ async def menus(c: CallbackQuery):
     elif key=="deposit":
         pending[c.from_user.id]="deposit"
         qr=await setting("qr_file_id")
-        detail=await setting("payment_text","Admin chưa cài thông tin thanh toán.")
+        detail=await setting("payment_text","🏦 NGÂN HÀNG: ACB\\n👤 CHỦ TÀI KHOẢN: BUI HOANG YEN LINH\\n💳 SỐ TÀI KHOẢN: 28682791\\n\\nQuét mã QR bên dưới để chuyển khoản nạp số dư vào bot.")
         text="💳 NẠP TIỀN\n"+detail+"\n\nNhập số tiền muốn nạp (VNĐ)."
         if qr:
             try: await c.message.answer_photo(qr,caption=text,reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
@@ -500,6 +500,33 @@ async def buy(c: CallbackQuery):
     await c.message.answer(prompt,reply_markup=kb([("❌ HỦY ĐẶT HÀNG","buyact:cancel")]))
     await c.answer()
 
+
+@dp.callback_query(F.data == "apaymentqr")
+async def admin_set_payment_qr(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    pending[c.from_user.id] = {"admin_payment_qr": True}
+    await c.message.answer(
+        "🖼 CÀI ĐẶT ẢNH QR NẠP TIỀN\\n\\n"
+        "Vui lòng gửi trực tiếp ảnh QR ACB gốc vào khung chat này. "
+        "Bot sẽ lưu ảnh và tự động hiển thị cho khách tại mục 💳 NẠP TIỀN.",
+        reply_markup=kb([("⬅️ HỦY","a:refresh")])
+    )
+    await c.answer()
+
+@dp.message(F.photo)
+async def capture_admin_payment_qr(m: Message):
+    task = pending.get(m.from_user.id)
+    if m.from_user.id not in ADMINS or not isinstance(task, dict) or not task.get("admin_payment_qr"):
+        return
+    photo_id = m.photo[-1].file_id
+    await setting_write("qr_file_id", photo_id)
+    pending.pop(m.from_user.id, None)
+    await m.answer(
+        "✅ ĐÃ LƯU ẢNH QR NẠP TIỀN.\\n"
+        "Ảnh này sẽ được hiển thị khi khách chọn 💳 NẠP TIỀN.",
+        reply_markup=kb([("💳 XEM CÀI ĐẶT NẠP TIỀN","a:payment"),("⬅️ MENU QUẢN TRỊ","a:refresh")])
+    )
 
 @dp.message(F.text)
 async def capture_purchase_account(m: Message):
@@ -1054,7 +1081,7 @@ async def admin_actions(c: CallbackQuery):
         await c.message.edit_text("➕➖ ĐIỀU CHỈNH SỐ DƯ\\nNhập Telegram ID hoặc tên thành viên cần thao tác:",reply_markup=kb([("⬅️ MENU QUẢN TRỊ","a:refresh")]))
     elif key=="payment":
         pending[c.from_user.id]="payment"
-        await c.message.answer("🏦 CÀI ĐẶT THANH TOÁN\\nNhập: TÊN NGÂN HÀNG|SỐ TK|CHỦ TK|NỘI DUNG CHUYỂN KHOẢN")
+        await c.message.answer("🏦 CÀI ĐẶT THANH TOÁN\\nNhập: TÊN NGÂN HÀNG|SỐ TK|CHỦ TK|NỘI DUNG CHUYỂN KHOẢN",reply_markup=kb([("🖼 CÀI ẢNH QR NẠP TIỀN","apaymentqr"),("⬅️ MENU QUẢN TRỊ","a:refresh")]))
     elif key=="notify":
         pending[c.from_user.id]={"notify_stage":"user_id"}
         await c.message.answer("📢 THÔNG BÁO THEO ID\\nNhập Telegram ID người nhận:")
