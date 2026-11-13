@@ -44,6 +44,22 @@ async def init_db():
             await db.execute("DELETE FROM products WHERE category='MINIGAME LIVE'")
             await db.execute("DELETE FROM settings WHERE key='minigame_text' OR key LIKE 'folder_label:mini_%' OR key LIKE 'folder:mini_%'")
             await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('migration:minigame_live_cleared_v1','1')")
+        cur = await db.execute("SELECT value FROM settings WHERE key='migration:minigame_live_products_v2'")
+        if not await cur.fetchone():
+            await db.execute("DELETE FROM products WHERE category='MINIGAME LIVE'")
+            descriptions = {
+                "XX8": "Nhận đủ 250 điểm theo combo.\\n\\n• Không nhận đủ điểm, liên hệ CSKH để kiểm tra và hoàn tiền.\\n\\n👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\n• Mỗi dòng 01 tài khoản.\\nVí dụ:\\nabcxyz\\nnguyenvana\\ntaikhoan123\\n\\n⚠️ ĐIỀU KIỆN BẮT BUỘC:\\n• Tài khoản phải có lịch sử nạp TRÊN 500.000Đ trong 07 ngày trước khi mua MINIGAME.\\n• Trúng thưởng nhưng không đủ điều kiện nạp sẽ KHÔNG ĐƯỢC NHẬN THƯỞNG.\\n\\n❗ Vui lòng kiểm tra tài khoản và điều kiện trước khi đặt mua!",
+                "88CLB": "Nhận đủ 174 điểm theo combo.\\n\\n• Không nhận đủ điểm, liên hệ CSKH để kiểm tra và hoàn tiền.\\n\\n👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\n• Mỗi dòng 01 tài khoản.\\nVí dụ:\\nabcxyz\\nnguyenvana\\ntaikhoan123\\n\\n⚠️ ĐIỀU KIỆN BẮT BUỘC:\\n• Tài khoản phải có lịch sử nạp TRÊN 500.000Đ trong 07 ngày trước khi mua MINIGAME.\\n• Trúng thưởng nhưng không đủ điều kiện nạp sẽ KHÔNG ĐƯỢC NHẬN THƯỞNG.\\n\\n❗ Vui lòng kiểm tra tài khoản và điều kiện trước khi đặt mua!",
+                "U888": "Nhận CODE ngẫu nhiên 118–288 điểm theo combo (khách hàng không được lựa chọn mức điểm).\\n\\n• Không nhận đủ điểm theo nội dung đơn hàng, liên hệ CSKH để kiểm tra và hoàn tiền.\\n\\n👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\n• Mỗi dòng 01 tài khoản.\\nVí dụ:\\nabcxyz\\nnguyenvana\\ntaikhoan123\\n\\n⚠️ ĐIỀU KIỆN BẮT BUỘC:\\n• Tài khoản phải có lịch sử nạp TRÊN 500.000Đ trong 07 ngày trước khi mua MINIGAME.\\n• Trúng thưởng nhưng không đủ điều kiện nạp sẽ KHÔNG ĐƯỢC NHẬN THƯỞNG.\\n\\n❗ Vui lòng kiểm tra tài khoản và điều kiện trước khi đặt mua!"
+            }
+            for game_name, product_name, price in [
+                ("XX8", "XX8 — GÓI 250 ĐIỂM", 65000),
+                ("88CLB", "88CLB — GÓI 174 ĐIỂM", 60000),
+                ("U888", "U888 — CODE NGẪU NHIÊN 118–288", 60000),
+            ]:
+                await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",
+                                 ("MINIGAME LIVE", game_name, product_name, price, descriptions[game_name]))
+            await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('migration:minigame_live_products_v2','1')")
         defaults = [
             ("SHARE","","SHARE QQ88",50000,"Chương trình CODE SHARE QQ88"),
             ("SHARE","","SHARE HI88",60000,"Chương trình CODE SHARE HI88"),
@@ -80,7 +96,7 @@ FOLDER_DEFS = [
     ("home_contact", "📞 LIÊN HỆ ADMIN", "Thư mục khách hàng"),
     ("home_houses", "🏦 HỆ THỐNG NHÀ CÁI", "Thư mục khách hàng"),
     ("mini_XX8", "🎯 MINIGAME XX8", "Chi tiết Minigame"),
-    ("mini_AD88", "🎯 MINIGAME AD88", "Chi tiết Minigame"),
+    ("mini_88CLB", "🎯 MINIGAME 88CLB", "Chi tiết Minigame"),
     ("mini_U888", "🎯 MINIGAME U888", "Chi tiết Minigame"),
     ("mini_88CLB", "🎯 MINIGAME 88CLB", "Chi tiết Minigame"),
     ("share_QQ88", "🔗 CODE SHARE QQ88", "Chi tiết CODE SHARE"),
@@ -161,7 +177,7 @@ CHILD_FOLDER_KEYS = {
     "home_code": ["home_codegame", "home_mini", "home_share"],
     "home_services": ["service_sms_receive", "service_sms_send", "service_proxy"],
     "home_codegame": [f"game_{g}" for g in GAMES],
-    "home_mini": [],
+    "home_mini": ["mini_XX8", "mini_88CLB", "mini_U888"],
     "home_share": ["share_QQ88", "share_HI88"],
 }
 
@@ -341,10 +357,12 @@ async def menus(c: CallbackQuery):
         game_rows=[(await folder_label(f"game_{g}",g),f"game:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]
         await c.message.edit_text((await folder_label("home_codegame","🎮 CODE GAME"))+"\n\nChọn game:",reply_markup=kb2(game_rows+[("⬅️ QUAY LẠI","m:code")]))
     elif key=="mini":
-        await c.message.edit_text(
-            (await folder_label("home_mini","🎯 MINIGAME LIVE"))+"\\n\\nHiện chưa có sản phẩm hoặc nội dung nào.",
-            reply_markup=kb2([("⬅️ QUAY LẠI","m:code")])
-        )
+        mini_rows=[]
+        for g in ["XX8","88CLB","U888"]:
+            if await folder_is_on(f"mini_{g}"):
+                mini_rows.append((await folder_label(f"mini_{g}",f"🎯 MINIGAME {g}"),f"miniitem:{g}"))
+        mini_rows.append(("⬅️ QUAY LẠI","m:code"))
+        await c.message.edit_text((await folder_label("home_mini","🎯 MINIGAME LIVE"))+"\\n\\nChọn minigame:",reply_markup=kb2(mini_rows))
     elif key=="share":
         share_rows=[]
         if await folder_is_on("share_QQ88"):
@@ -417,7 +435,7 @@ async def share_item(c: CallbackQuery):
 @dp.callback_query(F.data.startswith("miniitem:"))
 async def minigame_item(c: CallbackQuery):
     game_name=c.data.split(":",1)[1]
-    if game_name not in {"XX8","AD88","U888","88CLB"}:
+    if game_name not in {"XX8","U888","88CLB"}:
         return await c.answer("Danh mục không hợp lệ.",show_alert=True)
     if not await folder_is_on(f"mini_{game_name}"):
         return await c.answer("Thư mục minigame này hiện đang tắt.",show_alert=True)
@@ -451,8 +469,9 @@ async def buy(c: CallbackQuery):
     async with aiosqlite.connect(DB) as db:
         cur=await db.execute("SELECT category,game,name,price FROM products WHERE id=? AND active=1",(pid,)); p=await cur.fetchone()
     if not p: return await c.answer("Sản phẩm không còn khả dụng.",show_alert=True)
-    pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"price":p[3]}
-    await c.message.answer("📝 Vui lòng điền tên tài khoản cần mua. Nếu không yêu cầu tài khoản, nhập dấu -.",reply_markup=kb([("❌ HỦY ĐẶT HÀNG","buyact:cancel")]))
+    pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"unit_price":p[3],"price":p[3]}
+    prompt = ("👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\nMỗi dòng nhập 01 tài khoản.\\n\\nVí dụ:\\nabcxyz\\nnguyenvana\\ntaikhoan123" if p[0]=="MINIGAME LIVE" else "📝 Vui lòng điền tên tài khoản cần mua. Nếu không yêu cầu tài khoản, nhập dấu -.")
+    await c.message.answer(prompt,reply_markup=kb([("❌ HỦY ĐẶT HÀNG","buyact:cancel")]))
     await c.answer()
 
 
@@ -499,7 +518,14 @@ async def capture_purchase_account(m: Message):
     if not isinstance(task, dict) or "product_id" not in task or task.get("purchase_confirm"):
         return
     account = m.text.strip()
-    if not account or len(account) > 100:
+    if task.get("category") == "MINIGAME LIVE":
+        accounts = [line.strip() for line in account.splitlines() if line.strip()]
+        if not accounts or len(accounts) > 100 or any(len(x) > 100 for x in accounts):
+            return await m.answer("Danh sách tài khoản không hợp lệ. Mỗi dòng nhập 01 tài khoản (tối đa 100 tài khoản).")
+        account = "\\n".join(accounts)
+        task["quantity"] = len(accounts)
+        task["price"] = task["unit_price"] * len(accounts)
+    elif not account or len(account) > 100:
         return await m.answer("Tên tài khoản không hợp lệ. Vui lòng nhập lại (tối đa 100 ký tự).")
     task["account"] = account
     task["purchase_confirm"] = True
@@ -512,11 +538,12 @@ async def capture_purchase_account(m: Message):
         f"📦 SẢN PHẨM: {task['name']}\\n"
         f"👤 TÊN TÀI KHOẢN: {account}\\n\\n"
         f"💰 TỔNG TIỀN CẦN THANH TOÁN: {task['price']:,}đ\\n"
+        + (f"📦 SỐ TÀI KHOẢN: {task.get('quantity',1)}\\n💵 ĐƠN GIÁ: {task['unit_price']:,}đ\\n" if task.get("category")=="MINIGAME LIVE" else "")
         "━━━━━━━━━━━━━━━━━━\\n\\n"
         "⚠️ VUI LÒNG KIỂM TRA KỸ THÔNG TIN ĐƠN HÀNG TRƯỚC KHI TIẾP TỤC.\\n\\n"
         "🔴 KHI NHẤN XÁC NHẬN THANH TOÁN:\\n"
-        "✅ Bạn đồng ý với thông tin đơn hàng và số tiền cần thanh toán hiển thị.\\n"
-        "✅ Hệ thống sẽ ghi nhận đơn hàng và chuyển bạn đến bước thanh toán tiếp theo.\\n\\n"
+        "✅ Hệ thống kiểm tra số dư ví bot. Chỉ khi đủ tiền mới trừ tiền và tạo đơn hàng.\\n"
+        "✅ Sau khi thanh toán thành công, hệ thống thông báo mã đơn hàng.\\n\\n"
         "❗ Nếu thông tin chưa chính xác, vui lòng chọn QUAY LẠI để chỉnh sửa.\\n"
         "━━━━━━━━━━━━━━━━━━",
         reply_markup=kb([
@@ -916,7 +943,7 @@ async def add_product_category(c: CallbackQuery):
     if category=="GAME":
         await c.message.edit_text("BƯỚC 2/4 — Chọn game:",reply_markup=kb2([(g,f"agw:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]+[("⬅️ Quay lại","a:add")]))
     elif category=="MINIGAME LIVE":
-        await c.message.edit_text("BƯỚC 2/4 — Chọn minigame:",reply_markup=kb2([(g,f"amw:{g}") for g in ["XX8","AD88","U888","88CLB"]]+[("⬅️ QUAY LẠI","a:add")]))
+        await c.message.edit_text("BƯỚC 2/4 — Chọn minigame:",reply_markup=kb2([(g,f"amw:{g}") for g in ["XX8","88CLB","U888"]]+[("⬅️ QUAY LẠI","a:add")]))
     else:
         pending[c.from_user.id]={"add_stage":"name","category":category,"game":""}
         await c.message.edit_text(f"Danh mục: {category}\nBƯỚC 2/4 — Nhập tên sản phẩm/dịch vụ:",reply_markup=kb([("⬅️ QUAY LẠI CHỌN DANH MỤC","apback:category")]))
