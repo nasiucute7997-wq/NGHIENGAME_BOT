@@ -154,7 +154,7 @@ async def admin_kb():
     return b.as_markup()
 
 CHILD_FOLDER_KEYS = {
-    "home_code": [*[f"game_{g}" for g in GAMES], "mini_XX8", "mini_AD88", "mini_U888", "mini_88CLB", "share_QQ88", "share_HI88"],
+    "home_code": ["home_codegame", "home_mini", "home_share"],
     "home_services": ["service_sms_receive", "service_sms_send", "service_proxy"],
     "home_codegame": [f"game_{g}" for g in GAMES],
     "home_mini": ["mini_XX8", "mini_AD88", "mini_U888", "mini_88CLB"],
@@ -183,11 +183,10 @@ async def child_folders_kb(parent):
         label = defs.get(key, key)
         enabled = await folder_is_on(key)
         shown = await folder_label(key, label)
-        b.button(text=f"📂 CHỌN | {shown}"[:64], callback_data=f"afselect:{key}")
-        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | BẬT/TẮT"[:64], callback_data=f"af:{key}")
+        b.button(text=f"🎮 {shown}"[:64], callback_data=f"afselect:{key}")
     b.button(text="🔄 TẢI LẠI", callback_data=f"afchildren:{parent}")
     b.button(text="⬅️ QUAY LẠI THƯ MỤC CHÍNH", callback_data="a:folders")
-    b.adjust(2)
+    b.adjust(1)
     return b.as_markup()
 
 def admin_products_kb(rows):
@@ -591,7 +590,7 @@ async def admin_child_folders(c: CallbackQuery):
         return await c.answer("Thư mục chính không hợp lệ.", show_alert=True)
     defs = {item[0]: item[1] for item in FOLDER_DEFS}
     title = await folder_label(parent, defs.get(parent, parent))
-    await c.message.edit_text(f"⚙️ CÀI ĐẶT THƯ MỤC CON\\n{title}\\n\\nChọn từng SITE để bật/tắt hoặc cài đặt SITE GAME / NỘI DUNG / GIÁ:", reply_markup=await child_folders_kb(parent))
+    await c.message.edit_text(f"⚙️ QUẢN LÝ THƯ MỤC\\n{title}\\n\\nChọn một mục trong danh sách:", reply_markup=await child_folders_kb(parent))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("afselect:"))
@@ -604,6 +603,13 @@ async def admin_select_folder_for_config(c: CallbackQuery):
         return await c.answer("Thư mục không hợp lệ.", show_alert=True)
     category, game = await folder_config_products(key)
     title = await folder_label(key, defs[key])
+    if key in {"home_codegame", "home_mini", "home_share"}:
+        await c.message.edit_text(
+            f"📂 {title}\\n\\nChọn một game/site trong danh sách. Sau khi chọn mới hiển thị các thao tác chỉnh sửa:",
+            reply_markup=await child_folders_kb(key)
+        )
+        await c.answer()
+        return
     if category:
         async with aiosqlite.connect(DB) as db:
             if key.startswith("game_") or key.startswith("mini_"):
