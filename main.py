@@ -71,13 +71,13 @@ async def init_db():
             await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('migration:minigame_live_labels_v3','1')")
         # Cập nhật nội dung hướng dẫn ngắn gọn cho toàn bộ sản phẩm MINIGAME LIVE.
         common_rules = (
-            "\\n\\n👤 NHẬP TÊN TÀI KHOẢN GAME:\\n"
-            "• Mỗi dòng 01 tài khoản.\\n"
-            "Ví dụ:\\nabcxyz\\nnguyenvana"
-            "\\n\\n⚠️ ĐIỀU KIỆN:\\n"
-            "• Tài khoản phải có lịch sử nạp trên 500.000đ trong 07 ngày trước khi mua.\\n"
-            "• Không đủ điều kiện nạp sẽ không được nhận thưởng.\\n"
-            "• Không nhận đủ điểm, liên hệ CSKH để kiểm tra và hoàn tiền.\\n\\n"
+            "\n\n👤 NHẬP TÊN TÀI KHOẢN GAME:\n"
+            "• Mỗi dòng 01 tài khoản.\n"
+            "Ví dụ:\nabcxyz\nnguyenvana"
+            "\n\n⚠️ ĐIỀU KIỆN:\n"
+            "• Tài khoản phải có lịch sử nạp trên 500.000đ trong 07 ngày trước khi mua.\n"
+            "• Không đủ điều kiện nạp sẽ không được nhận thưởng.\n"
+            "• Không nhận đủ điểm, liên hệ CSKH để kiểm tra và hoàn tiền.\n\n"
             "❗ Vui lòng kiểm tra kỹ tài khoản và điều kiện trước khi đặt mua!"
         )
         minigame_descriptions = {
