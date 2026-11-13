@@ -502,12 +502,23 @@ async def capture_purchase_account(m: Message):
     site = task.get("game") or task.get("category") or "CODE GAME"
     await m.answer(
         "📋 XÁC NHẬN ĐƠN HÀNG\\n\\n"
+        "━━━━━━━━━━━━━━━━━━\\n"
         f"🎮 SITE GAME: {site}\\n"
         f"📦 SẢN PHẨM: {task['name']}\\n"
-        f"👤 TÊN TÀI KHOẢN: {account}\\n"
-        f"💰 TỔNG THANH TOÁN: {task['price']:,}đ\\n\\n"
-        "Vui lòng kiểm tra thông tin trước khi xác nhận thanh toán.",
-        reply_markup=kb([("✅ XÁC NHẬN THANH TOÁN", "buyact:confirm"), ("❌ HỦY ĐƠN HÀNG", "buyact:cancel")])
+        f"👤 TÊN TÀI KHOẢN: {account}\\n\\n"
+        f"💰 TỔNG TIỀN CẦN THANH TOÁN: {task['price']:,}đ\\n"
+        "━━━━━━━━━━━━━━━━━━\\n\\n"
+        "⚠️ VUI LÒNG KIỂM TRA KỸ THÔNG TIN ĐƠN HÀNG TRƯỚC KHI TIẾP TỤC.\\n\\n"
+        "🔴 KHI NHẤN XÁC NHẬN THANH TOÁN:\\n"
+        "✅ Bạn đồng ý với thông tin đơn hàng và số tiền cần thanh toán hiển thị.\\n"
+        "✅ Hệ thống sẽ ghi nhận đơn hàng và chuyển bạn đến bước thanh toán tiếp theo.\\n\\n"
+        "❗ Nếu thông tin chưa chính xác, vui lòng chọn QUAY LẠI để chỉnh sửa.\\n"
+        "━━━━━━━━━━━━━━━━━━",
+        reply_markup=kb([
+            ("✅ XÁC NHẬN THANH TOÁN", "buyact:confirm"),
+            ("✏️ QUAY LẠI CHỈNH SỬA", "buyact:back"),
+            ("❌ HỦY ĐƠN HÀNG", "buyact:cancel")
+        ])
     )
 
 
@@ -519,6 +530,16 @@ async def purchase_action(c: CallbackQuery):
         pending.pop(c.from_user.id,None)
         await c.message.edit_text("❌ Đã hủy thao tác mua hàng.",reply_markup=kb([("🏠 MENU CHÍNH","m:home")]))
         return await c.answer("Đã hủy.")
+    if action=="back":
+        if not isinstance(task,dict) or not task.get("product_id"):
+            return await c.answer("Phiên mua hàng đã hết. Vui lòng chọn lại sản phẩm.",show_alert=True)
+        task.pop("purchase_confirm",None)
+        pending[c.from_user.id]=task
+        await c.message.edit_text(
+            "✏️ CHỈNH SỬA THÔNG TIN ĐƠN HÀNG\\nVui lòng nhập lại tên tài khoản cần mua. Nếu không yêu cầu tài khoản, nhập dấu -.",
+            reply_markup=kb([("❌ HỦY ĐƠN HÀNG","buyact:cancel")])
+        )
+        return await c.answer("Vui lòng nhập lại thông tin.")
     if action!="confirm" or not isinstance(task,dict) or not task.get("purchase_confirm"):
         return await c.answer("Phiên mua hàng đã hết. Vui lòng chọn lại sản phẩm.",show_alert=True)
     async with aiosqlite.connect(DB) as db:
