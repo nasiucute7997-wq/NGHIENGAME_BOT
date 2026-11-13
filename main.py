@@ -22,7 +22,7 @@ if not TOKEN:
 dp = Dispatcher()
 pending = {}
 
-GAMES = ["LLWIN", "XX8", "AD88", "U888", "ABC8", "MM88", "RR88", "XX88", "GG88"]
+GAMES = ["LLWIN", "XX8", "AD88", "U888", "ABC8", "MM88", "RR88", "XX88", "GG88", "HI88"]
 
 async def init_db():
     os.makedirs(os.path.dirname(DB) or ".", exist_ok=True)
@@ -40,8 +40,7 @@ async def init_db():
             await db.execute("ALTER TABLE products ADD COLUMN description TEXT DEFAULT ''")
         except Exception:
             pass
-        # Giá bán CODE GAME cố định 10.000đ cho tất cả site hiện tại và site tạo mới.
-        await db.execute("UPDATE products SET price=10000 WHERE category='GAME'")
+        # Giữ nguyên giá CODE GAME đã được Admin cấu hình; giá mặc định được đặt khi tạo sản phẩm.
         # Xóa dữ liệu cũ trong MINIGAME LIVE đúng một lần; giữ nguyên thư mục chính.
         cur = await db.execute("SELECT value FROM settings WHERE key='migration:minigame_live_cleared_v1'")
         if not await cur.fetchone():
@@ -565,7 +564,7 @@ async def buy(c: CallbackQuery):
     async with aiosqlite.connect(DB) as db:
         cur=await db.execute("SELECT category,game,name,price FROM products WHERE id=? AND active=1",(pid,)); p=await cur.fetchone()
     if not p: return await c.answer("Sản phẩm không còn khả dụng.",show_alert=True)
-    unit_price = effective_game_price(p[1], 10000) if p[0] == "GAME" else p[3]
+    unit_price = effective_game_price(p[1], p[3]) if p[0] == "GAME" else p[3]
     pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"unit_price":unit_price,"price":unit_price}
     prompt = "👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:"
     if p[0] == "GAME" and str(p[1]).upper() == "LLWIN" and unit_price == 0:
