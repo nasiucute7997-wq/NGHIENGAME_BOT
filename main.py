@@ -98,7 +98,6 @@ FOLDER_DEFS = [
     ("mini_XX8", "🎯 MINIGAME XX8", "Chi tiết Minigame"),
     ("mini_88CLB", "🎯 MINIGAME 88CLB", "Chi tiết Minigame"),
     ("mini_U888", "🎯 MINIGAME U888", "Chi tiết Minigame"),
-    ("mini_88CLB", "🎯 MINIGAME 88CLB", "Chi tiết Minigame"),
     ("share_QQ88", "🔗 CODE SHARE QQ88", "Chi tiết CODE SHARE"),
     ("share_HI88", "🔗 CODE SHARE HI88", "Chi tiết CODE SHARE"),
     ("admin_add", "➕ THÊM SẢN PHẨM", "Thư mục quản trị"),
@@ -953,7 +952,7 @@ async def add_product_category(c: CallbackQuery):
 async def add_product_minigame(c: CallbackQuery):
     if c.from_user.id not in ADMINS: return await c.answer("Không có quyền.",show_alert=True)
     game_name=c.data.split(":",1)[1]
-    if game_name not in {"XX8","AD88","U888","88CLB"}: return await c.answer("Minigame không hợp lệ.",show_alert=True)
+    if game_name not in {"XX8","88CLB","U888"}: return await c.answer("Minigame không hợp lệ.",show_alert=True)
     pending[c.from_user.id]={"add_stage":"name","category":"MINIGAME LIVE","game":game_name}
     await c.message.edit_text(f"Danh mục: MINIGAME LIVE\\nMinigame: {game_name}\\nNhập tên sản phẩm:",reply_markup=kb([("⬅️ QUAY LẠI CHỌN MINIGAME","a:add")]))
     await c.answer()
