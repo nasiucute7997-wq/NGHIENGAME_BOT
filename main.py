@@ -632,16 +632,16 @@ async def capture_purchase_account(m: Message):
     site = task.get("game") or task.get("category") or "CODE GAME"
     import html
     confirmation = (
-        "📋 <b>XÁC NHẬN ĐƠN HÀNG</b>\\n"
-        f"🎮 <b>SITE GAME:</b> {html.escape(str(site))}\\n"
-        f"📦 <b>SẢN PHẨM:</b> {html.escape(str(task['name']))}\\n"
-        f"👤 <b>TÀI KHOẢN:</b> {html.escape(str(account))}\\n\\n"
-        f"💰 <b>TỔNG THANH TOÁN:</b> {task['price']:,}đ\\n"
-        f"📦 <b>SỐ LƯỢNG:</b> {task.get('quantity',1)}\\n"
-        f"💵 <b>ĐƠN GIÁ:</b> {task['unit_price']:,}đ\\n"
-        "⚠️ Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.\\n"
-        "✅ Hệ thống sẽ kiểm tra số dư và chỉ trừ tiền khi đủ số dư.\\n"
-        "✅ Thanh toán thành công sẽ hiển thị mã đơn hàng.\\n"
+        "📋 <b>XÁC NHẬN ĐƠN HÀNG</b>\n"
+        f"🎮 <b>SITE GAME:</b> {html.escape(str(site))}\n"
+        f"📦 <b>SẢN PHẨM:</b> {html.escape(str(task['name']))}\n"
+        f"👤 <b>TÀI KHOẢN:</b> {html.escape(str(account))}\n\n"
+        f"💰 <b>TỔNG THANH TOÁN:</b> {task['price']:,}đ\n"
+        f"📦 <b>SỐ LƯỢNG:</b> {task.get('quantity',1)}\n"
+        f"💵 <b>ĐƠN GIÁ:</b> {task['unit_price']:,}đ\n"
+        "⚠️ Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.\n"
+        "✅ Hệ thống sẽ kiểm tra số dư và chỉ trừ tiền khi đủ số dư.\n"
+        "✅ Thanh toán thành công sẽ hiển thị mã đơn hàng.\n"
         "❗ Sai thông tin? Chọn <b>QUAY LẠI</b> để chỉnh sửa."
     )
     await m.answer(
