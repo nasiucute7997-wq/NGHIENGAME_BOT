@@ -350,6 +350,14 @@ async def setting(key, default=""):
         row=await cur.fetchone()
         return row[0] if row else default
 
+def effective_game_price(game, base_price):
+    # Ưu đãi tri ân riêng cho LLWIN: miễn phí từ 13 đến hết 20/11/2026.
+    today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+    if str(game).upper() == "LLWIN" and datetime(2026, 11, 13).date() <= today <= datetime(2026, 11, 20).date():
+        return 0
+    return int(base_price)
+
+
 async def page_products(message, category, game=""):
     async with aiosqlite.connect(DB) as db:
         cur=await db.execute("SELECT id,name,price,description FROM products WHERE active=1 AND category=? AND (game=? OR game='') ORDER BY id",(category,game))
@@ -370,10 +378,18 @@ async def page_products(message, category, game=""):
         for _, name, price, desc in rows if desc
     )
     body = "<b>Chọn sản phẩm:</b>" + (f"\n\n{details}" if details else "")
+    if category == "GAME" and str(game).upper() == "LLWIN":
+        today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+        if datetime(2026, 11, 13).date() <= today <= datetime(2026, 11, 20).date():
+            body += "\n\n🎁 <b>GIÁ TRI ÂN LLWIN: 0đ/CODE</b>\n⏰ Áp dụng từ 13/11 đến hết 20/11/2026."
+    display_rows = [
+        (f"{n} — {effective_game_price(game, p) if category == 'GAME' else p:,}đ", f"buy:{i}")
+        for i, n, p, desc in rows
+    ]
     await message.edit_text(
         body,
         parse_mode="HTML",
-        reply_markup=kb2([(f"{n} — {p:,}đ", f"buy:{i}") for i, n, p, desc in rows] + [("⬅️ QUAY LẠI", back_to)])
+        reply_markup=kb2(display_rows + [("⬅️ QUAY LẠI", back_to)])
     )
 
 @dp.message(CommandStart())
@@ -549,9 +565,11 @@ async def buy(c: CallbackQuery):
     async with aiosqlite.connect(DB) as db:
         cur=await db.execute("SELECT category,game,name,price FROM products WHERE id=? AND active=1",(pid,)); p=await cur.fetchone()
     if not p: return await c.answer("Sản phẩm không còn khả dụng.",show_alert=True)
-    unit_price = 10000 if p[0] == "GAME" else p[3]
+    unit_price = effective_game_price(p[1], 10000) if p[0] == "GAME" else p[3]
     pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"unit_price":unit_price,"price":unit_price}
     prompt = "👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:"
+    if p[0] == "GAME" and str(p[1]).upper() == "LLWIN" and unit_price == 0:
+        prompt = "🎁 CODE LLWIN — GIÁ TRI ÂN 0Đ/CODE (13–20/11/2026)\n\n" + prompt
     await c.message.answer(prompt,reply_markup=kb([("❌ HỦY ĐẶT HÀNG","buyact:cancel")]))
     await c.answer()
 
