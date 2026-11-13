@@ -635,16 +635,15 @@ async def capture_purchase_account(m: Message):
         "━━━━━━━━━━━━━━━━━━\\n"
         f"🎮 SITE GAME: {site}\\n"
         f"📦 SẢN PHẨM: {task['name']}\\n"
-        f"👤 TÊN TÀI KHOẢN: {account}\\n\\n"
-        f"💰 TỔNG TIỀN CẦN THANH TOÁN: {task['price']:,}đ\\n"
-        + (f"📦 SỐ TÀI KHOẢN: {task.get('quantity',1)}\\n💵 ĐƠN GIÁ: {task['unit_price']:,}đ\\n" if task.get("category")=="MINIGAME LIVE" else "")
-        + "━━━━━━━━━━━━━━━━━━\\n\\n"
-        "⚠️ VUI LÒNG KIỂM TRA KỸ THÔNG TIN ĐƠN HÀNG TRƯỚC KHI TIẾP TỤC.\\n\\n"
-        "🔴 KHI NHẤN XÁC NHẬN THANH TOÁN:\\n"
-        "✅ Hệ thống kiểm tra số dư ví bot. Chỉ khi đủ tiền mới trừ tiền và tạo đơn hàng.\\n"
-        "✅ Sau khi thanh toán thành công, hệ thống thông báo mã đơn hàng.\\n\\n"
-        "❗ Nếu thông tin chưa chính xác, vui lòng chọn QUAY LẠI để chỉnh sửa.\\n"
-        "━━━━━━━━━━━━━━━━━━",
+        f"👤 TÀI KHOẢN: {account}\\n\\n"
+        f"💰 TỔNG THANH TOÁN: {task['price']:,}đ\\n"
+        f"📦 SỐ LƯỢNG: {task.get('quantity',1)}\\n"
+        f"💵 ĐƠN GIÁ: {task['unit_price']:,}đ\\n"
+        "━━━━━━━━━━━━━━━━━━\\n\\n"
+        "⚠️ Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.\\n\\n"
+        "✅ Hệ thống sẽ kiểm tra số dư và chỉ trừ tiền khi đủ số dư.\\n"
+        "✅ Thanh toán thành công sẽ hiển thị mã đơn hàng.\\n\\n"
+        "❗ Sai thông tin? Chọn QUAY LẠI để chỉnh sửa.",
         reply_markup=kb([
             ("✅ XÁC NHẬN THANH TOÁN", "buyact:confirm"),
             ("✏️ QUAY LẠI CHỈNH SỬA", "buyact:back"),
