@@ -538,7 +538,7 @@ async def capture_purchase_account(m: Message):
         f"👤 TÊN TÀI KHOẢN: {account}\\n\\n"
         f"💰 TỔNG TIỀN CẦN THANH TOÁN: {task['price']:,}đ\\n"
         + (f"📦 SỐ TÀI KHOẢN: {task.get('quantity',1)}\\n💵 ĐƠN GIÁ: {task['unit_price']:,}đ\\n" if task.get("category")=="MINIGAME LIVE" else "")
-        "━━━━━━━━━━━━━━━━━━\\n\\n"
+        + "━━━━━━━━━━━━━━━━━━\\n\\n"
         "⚠️ VUI LÒNG KIỂM TRA KỸ THÔNG TIN ĐƠN HÀNG TRƯỚC KHI TIẾP TỤC.\\n\\n"
         "🔴 KHI NHẤN XÁC NHẬN THANH TOÁN:\\n"
         "✅ Hệ thống kiểm tra số dư ví bot. Chỉ khi đủ tiền mới trừ tiền và tạo đơn hàng.\\n"
