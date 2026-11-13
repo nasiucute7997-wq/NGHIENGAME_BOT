@@ -369,7 +369,7 @@ async def page_products(message, category, game=""):
         f"• <b>{html.escape(str(name))}</b>:\n{format_product_description(desc)}"
         for _, name, price, desc in rows if desc
     )
-    body = "<b>Chọn sản phẩm:</b>" + (f"\\n\\n{details}" if details else "")
+    body = "<b>Chọn sản phẩm:</b>" + (f"\n\n{details}" if details else "")
     await message.edit_text(
         body,
         parse_mode="HTML",
