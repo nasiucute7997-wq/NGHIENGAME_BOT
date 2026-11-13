@@ -406,14 +406,13 @@ async def menus(c: CallbackQuery):
         me=await c.bot.get_me()
         await c.message.edit_text(f"👤 TÀI KHOẢN\nTên: {c.from_user.full_name}\nID: {c.from_user.id}\nSố dư: {(row[0] if row else 0):,}đ\n\nLink chia sẻ: https://t.me/{me.username}?start=ref_{c.from_user.id}",reply_markup=kb([("🔄 LÀM MỚI","m:account"),("⬅️ MENU CHÍNH","m:home")]))
     elif key=="deposit":
-        pending[c.from_user.id]="deposit"
-        qr=await setting("qr_file_id")
-        detail=f"🏦 NGÂN HÀNG: ACB\n👤 CHỦ TÀI KHOẢN: BUI HOANG YEN LINH\n💳 SỐ TÀI KHOẢN: 28682791\n\nQuét mã QR bên dưới để chuyển khoản nạp số dư vào bot.\n\n📝 NỘI DUNG CHUYỂN KHOẢN: {c.from_user.id}"
-        text="💳 NẠP TIỀN\n\n"+detail+"\n\nNhập số tiền muốn nạp (VNĐ)."
-        if qr:
-            try: await c.message.answer_photo(qr,caption=text,reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
-            except Exception: await c.message.answer(text,reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
-        else: await c.message.answer(text,reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
+        pending[c.from_user.id]={"deposit_stage":"amount"}
+        await c.message.answer(
+            "💳 NẠP TIỀN\n\n"
+            "BẠN MUỐN NẠP SỐ TIỀN: 20.000đ, 50.000đ, 100.000đ, ......\n\n"
+            "VUI LÒNG NHẬP SỐ TIỀN CẦN NẠP (VNĐ).",
+            reply_markup=kb([("⬅️ MENU CHÍNH","m:home")])
+        )
     elif key=="orders":
         async with aiosqlite.connect(DB) as db:
             cur=await db.execute("SELECT id,product_name,price,status,created_at FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 10",(c.from_user.id,))
@@ -531,6 +530,37 @@ async def capture_admin_payment_qr(m: Message):
 @dp.message(F.text)
 async def capture_purchase_account(m: Message):
     task = pending.get(m.from_user.id)
+    if isinstance(task, dict) and task.get("deposit_stage") == "amount":
+        raw = (m.text or "").strip()
+        digits = raw.replace(",", "").replace(".", "").replace("đ", "").replace("Đ", "").replace(" ", "")
+        if not digits.isdigit():
+            return await m.answer("⚠️ Số tiền không hợp lệ. Vui lòng nhập số VNĐ, ví dụ: 20000, 50000, 100000.")
+        amount = int(digits)
+        if amount < 1000 or amount > 100000000:
+            return await m.answer("⚠️ Số tiền nạp phải từ 1.000đ đến 100.000.000đ. Vui lòng nhập lại.")
+        async with aiosqlite.connect(DB) as db:
+            cur = await db.execute("INSERT INTO deposits(user_id,amount,status) VALUES(?,?,'pending')", (m.from_user.id, amount))
+            deposit_id = cur.lastrowid
+            await db.commit()
+        pending[m.from_user.id] = {"deposit_stage": "receipt", "deposit_id": deposit_id, "amount": amount}
+        detail = (
+            "🏦 NGÂN HÀNG: ACB\n"
+            "👤 CHỦ TÀI KHOẢN: BUI HOANG YEN LINH\n"
+            "💳 SỐ TÀI KHOẢN: 28682791\n\n"
+            "Quét mã QR bên dưới để chuyển khoản nạp số dư vào bot.\n\n"
+            f"💰 SỐ TIỀN CẦN CHUYỂN: {amount:,}đ\n"
+            f"📝 NỘI DUNG CHUYỂN KHOẢN: {m.from_user.id}"
+        )
+        caption = "💳 THÔNG TIN NẠP TIỀN\n\n" + detail + "\n\nVui lòng chuyển đúng số tiền và nội dung. Sau đó gửi ảnh biên lai cho Admin để được kiểm tra."
+        qr = await setting("qr_file_id")
+        if qr:
+            try:
+                await m.answer_photo(qr, caption=caption, reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
+            except Exception:
+                await m.answer(caption, reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
+        else:
+            await m.answer(caption, reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
+        return
     if m.from_user.id in ADMINS and isinstance(task, dict):
         raw = (m.text or "").strip()
         if task.get("admin_new_site_name"):
