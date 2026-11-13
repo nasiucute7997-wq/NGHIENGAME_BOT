@@ -39,6 +39,8 @@ async def init_db():
             await db.execute("ALTER TABLE products ADD COLUMN description TEXT DEFAULT ''")
         except Exception:
             pass
+        # Giá bán CODE GAME cố định 10.000đ cho tất cả site hiện tại và site tạo mới.
+        await db.execute("UPDATE products SET price=10000 WHERE category='GAME'")
         # Xóa dữ liệu cũ trong MINIGAME LIVE đúng một lần; giữ nguyên thư mục chính.
         cur = await db.execute("SELECT value FROM settings WHERE key='migration:minigame_live_cleared_v1'")
         if not await cur.fetchone():
@@ -492,7 +494,8 @@ async def buy(c: CallbackQuery):
     async with aiosqlite.connect(DB) as db:
         cur=await db.execute("SELECT category,game,name,price FROM products WHERE id=? AND active=1",(pid,)); p=await cur.fetchone()
     if not p: return await c.answer("Sản phẩm không còn khả dụng.",show_alert=True)
-    pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"unit_price":p[3],"price":p[3]}
+    unit_price = 10000 if p[0] == "GAME" else p[3]
+    pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"unit_price":unit_price,"price":unit_price}
     prompt = ("👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\nMỗi dòng nhập 01 tài khoản.\\n\\nVí dụ:\\nabcxyz\\nnguyenvana\\ntaikhoan123" if p[0]=="MINIGAME LIVE" else "📝 Vui lòng điền tên tài khoản cần mua. Nếu không yêu cầu tài khoản, nhập dấu -.")
     await c.message.answer(prompt,reply_markup=kb([("❌ HỦY ĐẶT HÀNG","buyact:cancel")]))
     await c.answer()
@@ -940,6 +943,10 @@ async def admin_config_confirm(c: CallbackQuery):
     elif task["draft_kind"] == "product_field":
         field, pid, value = task["admin_product_field"], task["product_id"], task["draft_value"]
         async with aiosqlite.connect(DB) as db:
+            cur = await db.execute("SELECT category FROM products WHERE id=?", (pid,))
+            product_row = await cur.fetchone()
+            if field == "price" and product_row and product_row[0] == "GAME":
+                value = 10000
             await db.execute(f"UPDATE products SET {field}=? WHERE id=?", (value, pid))
             await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)", (c.from_user.id, f"folder config {field} product {pid}"))
             await db.commit()
@@ -1125,7 +1132,8 @@ async def add_product_confirm(c: CallbackQuery):
         await c.message.edit_text("Nhập lại tên sản phẩm:",reply_markup=kb([("⬅️ QUAY LẠI XÁC NHẬN","apback:confirm")]))
     elif action=="save":
         async with aiosqlite.connect(DB) as db:
-            await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",(task["category"],task["game"],task["name"],task["price"],task["description"]))
+            final_price = 10000 if task["category"] == "GAME" else task["price"]
+            await db.execute("INSERT INTO products(category,game,name,price,description) VALUES(?,?,?,?,?)",(task["category"],task["game"],task["name"],final_price,task["description"]))
             await db.commit()
         pending.pop(c.from_user.id,None)
         await c.message.edit_text("✅ Đã lưu sản phẩm.",reply_markup=await admin_kb())
