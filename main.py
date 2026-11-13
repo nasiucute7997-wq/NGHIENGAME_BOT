@@ -631,19 +631,17 @@ async def capture_purchase_account(m: Message):
     pending[m.from_user.id] = task
     site = task.get("game") or task.get("category") or "CODE GAME"
     await m.answer(
-        "📋 XÁC NHẬN ĐƠN HÀNG\\n\\n"
-        "━━━━━━━━━━━━━━━━━━\\n"
-        f"🎮 SITE GAME: {site}\\n"
-        f"📦 SẢN PHẨM: {task['name']}\\n"
-        f"👤 TÀI KHOẢN: {account}\\n\\n"
-        f"💰 TỔNG THANH TOÁN: {task['price']:,}đ\\n"
-        f"📦 SỐ LƯỢNG: {task.get('quantity',1)}\\n"
-        f"💵 ĐƠN GIÁ: {task['unit_price']:,}đ\\n"
-        "━━━━━━━━━━━━━━━━━━\\n\\n"
-        "⚠️ Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.\\n\\n"
+        "📋 **XÁC NHẬN ĐƠN HÀNG**\\n"
+        f"🎮 **SITE GAME:** {site}\\n"
+        f"📦 **SẢN PHẨM:** {task['name']}\\n"
+        f"👤 **TÀI KHOẢN:** {account}\\n\\n"
+        f"💰 **TỔNG THANH TOÁN:** {task['price']:,}đ\\n"
+        f"📦 **SỐ LƯỢNG:** {task.get('quantity',1)}\\n"
+        f"💵 **ĐƠN GIÁ:** {task['unit_price']:,}đ\\n"
+        "⚠️ Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.\\n"
         "✅ Hệ thống sẽ kiểm tra số dư và chỉ trừ tiền khi đủ số dư.\\n"
-        "✅ Thanh toán thành công sẽ hiển thị mã đơn hàng.\\n\\n"
-        "❗ Sai thông tin? Chọn QUAY LẠI để chỉnh sửa.",
+        "✅ Thanh toán thành công sẽ hiển thị mã đơn hàng.\\n"
+        "❗ Sai thông tin? Chọn **QUAY LẠI** để chỉnh sửa.",
         reply_markup=kb([
             ("✅ XÁC NHẬN THANH TOÁN", "buyact:confirm"),
             ("✏️ QUAY LẠI CHỈNH SỬA", "buyact:back"),
