@@ -360,7 +360,7 @@ async def menus(c: CallbackQuery):
             if await folder_is_on(f"mini_{g}"):
                 mini_rows.append((await folder_label(f"mini_{g}",f"🎯 MINIGAME {g}"),f"miniitem:{g}"))
         mini_rows.append(("⬅️ QUAY LẠI","m:code"))
-        await c.message.edit_text((await folder_label("home_mini","🎯 MINIGAME LIVE"),reply_markup=kb2(mini_rows))
+        await c.message.edit_text(await folder_label("home_mini","🎯 MINIGAME LIVE"),reply_markup=kb2(mini_rows))
     elif key=="share":
         share_rows=[]
         if await folder_is_on("share_QQ88"):
