@@ -183,8 +183,8 @@ async def child_folders_kb(parent):
         label = defs.get(key, key)
         enabled = await folder_is_on(key)
         shown = await folder_label(key, label)
-        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | {shown}"[:64], callback_data=f"af:{key}")
-        b.button(text=f"⚙️ CÀI ĐẶT | {shown}"[:64], callback_data=f"afe:{key}")
+        b.button(text=f"📂 CHỌN | {shown}"[:64], callback_data=f"afselect:{key}")
+        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | BẬT/TẮT"[:64], callback_data=f"af:{key}")
     b.button(text="🔄 TẢI LẠI", callback_data=f"afchildren:{parent}")
     b.button(text="⬅️ QUAY LẠI THƯ MỤC CHÍNH", callback_data="a:folders")
     b.adjust(2)
@@ -467,9 +467,14 @@ async def capture_purchase_account(m: Message):
                 f"📋 XÁC NHẬN ĐỔI TÊN THƯ MỤC\\n\\nTên mới: {raw}\\n\\nLưu thay đổi này?",
                 reply_markup=kb([("✅ XÁC NHẬN LƯU", "cfgconfirm:yes"), ("❌ HỦY", "cfgconfirm:no")])
             )
-        if task.get("admin_product_field") in {"description", "price"} and task.get("config_return"):
+        if task.get("admin_product_field") in {"name", "description", "price"} and task.get("config_return"):
             field = task["admin_product_field"]
-            if field == "price":
+            if field == "name":
+                value = raw
+                if not value or len(value) > 100:
+                    return await m.answer("Tên sản phẩm không hợp lệ. Nhập từ 1–100 ký tự.")
+                preview = value
+            elif field == "price":
                 digits = raw.replace(",", "").replace(".", "").replace("đ", "").replace(" ", "")
                 if not digits.isdigit() or int(digits) <= 0:
                     return await m.answer("Giá không hợp lệ. Vui lòng nhập số tiền VNĐ lớn hơn 0.")
@@ -484,7 +489,7 @@ async def capture_purchase_account(m: Message):
             task["draft_kind"] = "product_field"
             pending[m.from_user.id] = task
             return await m.answer(
-                f"📋 XÁC NHẬN CẬP NHẬT {('GIÁ' if field == 'price' else 'NỘI DUNG')}\\n\\nGiá trị mới: {preview}\\n\\nBạn xác nhận lưu mục này?",
+                f"📋 XÁC NHẬN CẬP NHẬT {({'name':'TÊN SẢN PHẨM','price':'GIÁ','description':'NỘI DUNG'}[field])}\\n\\nGiá trị mới: {preview}\\n\\nBạn xác nhận lưu mục này?",
                 reply_markup=kb([("✅ XÁC NHẬN LƯU", "cfgconfirm:yes"), ("❌ HỦY", "cfgconfirm:no")])
             )
     if not isinstance(task, dict) or "product_id" not in task or task.get("purchase_confirm"):
@@ -555,15 +560,20 @@ async def folder_config_products(key):
         return ("MINIGAME LIVE", None)
     if key == "home_share":
         return ("SHARE", None)
+    if key in {"service_sms_receive", "service_sms_send"}:
+        return ("SMS", None)
+    if key == "service_proxy":
+        return ("PRX", None)
     return (None, None)
 
 async def folder_config_kb(key):
     b = InlineKeyboardBuilder()
     category, game = await folder_config_products(key)
     if category:
-        b.button(text="🎮 SITE GAME", callback_data=f"cfgsite:{key}")
-        b.button(text="📝 NỘI DUNG", callback_data=f"cfgfield:description:{key}")
-        b.button(text="💵 GIÁ", callback_data=f"cfgfield:price:{key}")
+        b.button(text="✏️ TÊN SITE / THƯ MỤC", callback_data=f"cfgsite:{key}")
+        b.button(text="📦 TÊN SẢN PHẨM", callback_data=f"cfgfield:name:{key}")
+        b.button(text="📝 NỘI DUNG / MÔ TẢ", callback_data=f"cfgfield:description:{key}")
+        b.button(text="💵 GIÁ BÁN", callback_data=f"cfgfield:price:{key}")
     else:
         b.button(text="✏️ ĐỔI TÊN HIỂN THỊ", callback_data=f"cfgsite:{key}")
     parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), None)
@@ -582,6 +592,57 @@ async def admin_child_folders(c: CallbackQuery):
     defs = {item[0]: item[1] for item in FOLDER_DEFS}
     title = await folder_label(parent, defs.get(parent, parent))
     await c.message.edit_text(f"⚙️ CÀI ĐẶT THƯ MỤC CON\\n{title}\\n\\nChọn từng SITE để bật/tắt hoặc cài đặt SITE GAME / NỘI DUNG / GIÁ:", reply_markup=await child_folders_kb(parent))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("afselect:"))
+async def admin_select_folder_for_config(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    key = c.data.split(":",1)[1]
+    defs = {item[0]: item[1] for item in FOLDER_DEFS}
+    if key not in defs:
+        return await c.answer("Thư mục không hợp lệ.", show_alert=True)
+    category, game = await folder_config_products(key)
+    title = await folder_label(key, defs[key])
+    if category:
+        async with aiosqlite.connect(DB) as db:
+            if key.startswith("game_") or key.startswith("mini_"):
+                cur = await db.execute("SELECT id,name,price,active FROM products WHERE category=? AND game=? ORDER BY id", (category, game))
+            elif key.startswith("share_"):
+                cur = await db.execute("SELECT id,name,price,active FROM products WHERE category=? AND name LIKE ? ORDER BY id", (category, f"%{game}%"))
+            else:
+                cur = await db.execute("SELECT id,name,price,active FROM products WHERE category=? ORDER BY id", (category,))
+            products = await cur.fetchall()
+        buttons = [(f"📦 {name} · {price:,}đ {'🟢' if active else '🔴'}", f"afproduct:{pid}:{key}") for pid,name,price,active in products]
+        if not products:
+            buttons = [("⚙️ CÀI ĐẶT TÊN THƯ MỤC", f"afe:{key}")]
+        parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), "home_code")
+        buttons.append(("⬅️ DANH SÁCH THƯ MỤC", f"afchildren:{parent}"))
+        await c.message.edit_text(f"📂 {title}\\n\\nDanh sách sản phẩm/site đã có. Chọn mục cần chỉnh sửa:", reply_markup=kb2(buttons))
+    else:
+        await c.message.edit_text(f"⚙️ CÀI ĐẶT {title}\\nChọn nội dung cần chỉnh sửa:", reply_markup=await folder_config_kb(key))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("afproduct:"))
+async def admin_select_folder_product(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    _, raw_pid, key = c.data.split(":",2)
+    pid = int(raw_pid)
+    async with aiosqlite.connect(DB) as db:
+        cur = await db.execute("SELECT name,description,price,active FROM products WHERE id=?", (pid,))
+        row = await cur.fetchone()
+    if not row:
+        return await c.answer("Không tìm thấy sản phẩm.", show_alert=True)
+    name, description, price, active = row
+    buttons = [
+        (f"✏️ SỬA TÊN: {name}"[:60], f"cfgprod:name:{pid}:{key}"),
+        ("📝 SỬA NỘI DUNG / MÔ TẢ", f"cfgprod:description:{pid}:{key}"),
+        (f"💵 SỬA GIÁ: {price:,}đ", f"cfgprod:price:{pid}:{key}"),
+        (("🔴 TẮT SẢN PHẨM" if active else "🟢 BẬT SẢN PHẨM"), f"at:{pid}"),
+        ("⬅️ DANH SÁCH SITE / SẢN PHẨM", f"afselect:{key}")
+    ]
+    await c.message.edit_text(f"📦 CHI TIẾT SẢN PHẨM\\nTên: {name}\\nNội dung: {description or 'Chưa có'}\\nGiá: {price:,}đ\\nTrạng thái: {'ĐANG BẬT' if active else 'ĐANG TẮT'}\\n\\nChọn chi tiết cần chỉnh sửa:", reply_markup=kb2(buttons))
     await c.answer()
 
 @dp.callback_query(F.data.startswith("afe:"))
@@ -631,7 +692,7 @@ async def admin_config_product_field(c: CallbackQuery):
     if c.from_user.id not in ADMINS:
         return await c.answer("Không có quyền.", show_alert=True)
     _, field, key = c.data.split(":",2)
-    if field not in {"description","price"}:
+    if field not in {"name","description","price"}:
         return await c.answer("Mục chỉnh sửa không hợp lệ.", show_alert=True)
     category, game = await folder_config_products(key)
     if not category:
@@ -658,7 +719,7 @@ async def admin_config_product_select(c: CallbackQuery):
     if c.from_user.id not in ADMINS:
         return await c.answer("Không có quyền.", show_alert=True)
     _, field, raw_pid, key = c.data.split(":",3)
-    if field not in {"description","price"}:
+    if field not in {"name","description","price"}:
         return await c.answer("Mục chỉnh sửa không hợp lệ.", show_alert=True)
     pid = int(raw_pid)
     async with aiosqlite.connect(DB) as db:
@@ -667,7 +728,9 @@ async def admin_config_product_select(c: CallbackQuery):
     if not row:
         return await c.answer("Không tìm thấy sản phẩm.", show_alert=True)
     pending[c.from_user.id] = {"admin_product_field": field, "product_id": pid, "config_return": key}
-    if field == "description":
+    if field == "name":
+        prompt = f"✏️ NHẬP TÊN MỚI CHO SẢN PHẨM\\nHiện tại: {row[0]}"
+    elif field == "description":
         current_value = row[1] or "Chưa có"
         prompt = f"📝 NHẬP NỘI DUNG MỚI CHO {row[0]}\\nHiện tại: {current_value}\\n\\nGửi dấu - nếu muốn xóa nội dung."
     else:
