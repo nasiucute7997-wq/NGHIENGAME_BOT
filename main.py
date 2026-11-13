@@ -664,7 +664,7 @@ async def purchase_action(c: CallbackQuery):
         task.pop("purchase_confirm",None)
         pending[c.from_user.id]=task
         await c.message.edit_text(
-            "✏️ CHỈNH SỬA THÔNG TIN ĐƠN HÀNG\\nVui lòng nhập lại tên tài khoản cần mua. Nếu không yêu cầu tài khoản, nhập dấu -.",
+            "✏️ CHỈNH SỬA THÔNG TIN ĐƠN HÀNG: Vui lòng nhập lại tên tài khoản cần mua:",
             reply_markup=kb([("❌ HỦY ĐƠN HÀNG","buyact:cancel")])
         )
         return await c.answer("Vui lòng nhập lại thông tin.")
