@@ -450,6 +450,29 @@ async def buy(c: CallbackQuery):
     await c.answer()
 
 
+@dp.message(F.text)
+async def capture_purchase_account(m: Message):
+    task = pending.get(m.from_user.id)
+    if not isinstance(task, dict) or "product_id" not in task or task.get("purchase_confirm"):
+        return
+    account = m.text.strip()
+    if not account or len(account) > 100:
+        return await m.answer("Tên tài khoản không hợp lệ. Vui lòng nhập lại (tối đa 100 ký tự).")
+    task["account"] = account
+    task["purchase_confirm"] = True
+    pending[m.from_user.id] = task
+    site = task.get("game") or task.get("category") or "CODE GAME"
+    await m.answer(
+        "📋 XÁC NHẬN ĐƠN HÀNG\\n\\n"
+        f"🎮 SITE GAME: {site}\\n"
+        f"📦 SẢN PHẨM: {task['name']}\\n"
+        f"👤 TÊN TÀI KHOẢN: {account}\\n"
+        f"💰 TỔNG THANH TOÁN: {task['price']:,}đ\\n\\n"
+        "Vui lòng kiểm tra thông tin trước khi xác nhận thanh toán.",
+        reply_markup=kb([("✅ XÁC NHẬN THANH TOÁN", "buyact:confirm"), ("❌ HỦY ĐƠN HÀNG", "buyact:cancel")])
+    )
+
+
 @dp.callback_query(F.data.startswith("buyact:"))
 async def purchase_action(c: CallbackQuery):
     action=c.data.split(":",1)[1]
