@@ -495,7 +495,7 @@ async def buy(c: CallbackQuery):
     if not p: return await c.answer("Sản phẩm không còn khả dụng.",show_alert=True)
     unit_price = 10000 if p[0] == "GAME" else p[3]
     pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"unit_price":unit_price,"price":unit_price}
-    prompt = "👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\n• Mỗi dòng 01 tài khoản.\\nVí dụ:\\nabcxyz"
+    prompt = "👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:"
     await c.message.answer(prompt,reply_markup=kb([("❌ HỦY ĐẶT HÀNG","buyact:cancel")]))
     await c.answer()
 
