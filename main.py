@@ -453,6 +453,38 @@ async def buy(c: CallbackQuery):
 @dp.message(F.text)
 async def capture_purchase_account(m: Message):
     task = pending.get(m.from_user.id)
+    if m.from_user.id in ADMINS and isinstance(task, dict):
+        raw = (m.text or "").strip()
+        if "folder_label_edit" in task:
+            if not raw or len(raw) > 60:
+                return await m.answer("Tên hiển thị không hợp lệ. Nhập tối đa 60 ký tự.")
+            task["draft_value"] = raw
+            task["draft_kind"] = "folder_label"
+            pending[m.from_user.id] = task
+            return await m.answer(
+                f"📋 XÁC NHẬN ĐỔI TÊN THƯ MỤC\\n\\nTên mới: {raw}\\n\\nLưu thay đổi này?",
+                reply_markup=kb([("✅ XÁC NHẬN LƯU", "cfgconfirm:yes"), ("❌ HỦY", "cfgconfirm:no")])
+            )
+        if task.get("admin_product_field") in {"description", "price"} and task.get("config_return"):
+            field = task["admin_product_field"]
+            if field == "price":
+                digits = raw.replace(",", "").replace(".", "").replace("đ", "").replace(" ", "")
+                if not digits.isdigit() or int(digits) <= 0:
+                    return await m.answer("Giá không hợp lệ. Vui lòng nhập số tiền VNĐ lớn hơn 0.")
+                value = int(digits)
+                preview = f"{value:,}đ"
+            else:
+                value = "" if raw == "-" else raw
+                if len(value) > 1000:
+                    return await m.answer("Nội dung quá dài. Tối đa 1000 ký tự.")
+                preview = value or "Đã xóa nội dung"
+            task["draft_value"] = value
+            task["draft_kind"] = "product_field"
+            pending[m.from_user.id] = task
+            return await m.answer(
+                f"📋 XÁC NHẬN CẬP NHẬT {('GIÁ' if field == 'price' else 'NỘI DUNG')}\\n\\nGiá trị mới: {preview}\\n\\nBạn xác nhận lưu mục này?",
+                reply_markup=kb([("✅ XÁC NHẬN LƯU", "cfgconfirm:yes"), ("❌ HỦY", "cfgconfirm:no")])
+            )
     if not isinstance(task, dict) or "product_id" not in task or task.get("purchase_confirm"):
         return
     account = m.text.strip()
@@ -641,6 +673,60 @@ async def admin_config_product_select(c: CallbackQuery):
     await c.message.edit_text(prompt, reply_markup=kb([("⬅️ QUAY LẠI CHỌN SẢN PHẨM", f"cfgfield:{field}:{key}"), ("⬅️ CÀI ĐẶT THƯ MỤC", f"cfgback:{key}")]))
     await c.answer()
 
+@dp.callback_query(F.data.startswith("cfgconfirm:"))
+async def admin_config_confirm(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    task = pending.get(c.from_user.id)
+    action = c.data.split(":", 1)[1]
+    if not isinstance(task, dict) or action not in {"yes", "no"} or "draft_kind" not in task:
+        return await c.answer("Không còn thay đổi nào cần xác nhận.", show_alert=True)
+    key = task.get("config_return") or task.get("folder_label_edit")
+    if action == "no":
+        pending.pop(c.from_user.id, None)
+        return await c.message.edit_text("❌ Đã hủy cập nhật. Chưa có thay đổi nào được lưu.", reply_markup=kb([("⬅️ CÀI ĐẶT THƯ MỤC", f"afe:{key}")]))
+    if task["draft_kind"] == "folder_label":
+        await setting_write(f"folder_label:{task['folder_label_edit']}", task["draft_value"])
+        pending.pop(c.from_user.id, None)
+        await c.message.edit_text("✅ ĐÃ LƯU TÊN THƯ MỤC.", reply_markup=kb([("⚙️ CÀI ĐẶT LẠI", f"afe:{key}"), ("⬅️ QUẢN LÝ THƯ MỤC", "a:folders")]))
+    elif task["draft_kind"] == "product_field":
+        field, pid, value = task["admin_product_field"], task["product_id"], task["draft_value"]
+        async with aiosqlite.connect(DB) as db:
+            await db.execute(f"UPDATE products SET {field}=? WHERE id=?", (value, pid))
+            await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)", (c.from_user.id, f"folder config {field} product {pid}"))
+            await db.commit()
+        pending.pop(c.from_user.id, None)
+        await c.message.edit_text("✅ ĐÃ LƯU THAY ĐỔI SẢN PHẨM.", reply_markup=kb([("⚙️ CÀI ĐẶT THƯ MỤC", f"afe:{key}"), ("⬅️ QUẢN LÝ THƯ MỤC", "a:folders")]))
+    await c.answer("Đã xác nhận lưu.")
+
+@dp.callback_query(F.data.startswith("afconfirm:"))
+async def admin_folder_toggle_confirm(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    task = pending.get(c.from_user.id)
+    action = c.data.split(":", 1)[1]
+    if not isinstance(task, dict) or "folder_toggle_confirm" not in task or action not in {"yes", "no"}:
+        return await c.answer("Phiên xác nhận đã hết.", show_alert=True)
+    key = task["folder_toggle_confirm"]
+    parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), None)
+    if action == "yes":
+        async with aiosqlite.connect(DB) as db:
+            await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder:{key}", "1" if task["new_state"] else "0"))
+            await db.execute("INSERT INTO admin_logs(admin_id,action) VALUES(?,?)", (c.from_user.id, f"folder {key} {'on' if task['new_state'] else 'off'}"))
+            await db.commit()
+    pending.pop(c.from_user.id, None)
+    if parent:
+        title = await folder_label(parent, parent)
+        await c.message.edit_text(f"⚙️ CÀI ĐẶT THƯ MỤC CON\\n{title}\\n\\n{'✅ Đã cập nhật.' if action == 'yes' else '❌ Đã hủy, không thay đổi.'}", reply_markup=await child_folders_kb(parent))
+    else:
+        await c.message.edit_text(f"⚙️ QUẢN LÝ THƯ MỤC\\n{'✅ Đã cập nhật.' if action == 'yes' else '❌ Đã hủy, không thay đổi.'}", reply_markup=await folders_kb())
+    await c.answer("Đã lưu." if action == "yes" else "Đã hủy.")
+
+async def setting_write(key, value):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, value))
+        await db.commit()
+
 @dp.callback_query(F.data.startswith("af:"))
 async def admin_toggle_folder(c: CallbackQuery):
     if c.from_user.id not in ADMINS:
@@ -649,17 +735,16 @@ async def admin_toggle_folder(c: CallbackQuery):
     if key not in {item[0] for item in FOLDER_DEFS}:
         return await c.answer("Thư mục không hợp lệ.", show_alert=True)
     current = await folder_is_on(key)
-    async with aiosqlite.connect(DB) as db:
-        await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (f"folder:{key}", "0" if current else "1"))
-        await db.commit()
+    pending[c.from_user.id] = {"folder_toggle_confirm": key, "new_state": not current}
+    defs = {item[0]: item[1] for item in FOLDER_DEFS}
+    shown = await folder_label(key, defs.get(key, key))
     parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), None)
-    if parent:
-        defs = {item[0]: item[1] for item in FOLDER_DEFS}
-        title = await folder_label(parent, defs.get(parent, parent))
-        await c.message.edit_text(f"⚙️ CÀI ĐẶT THƯ MỤC CON\\n{title}\\n\\nĐã cập nhật trạng thái thư mục con:", reply_markup=await child_folders_kb(parent))
-    else:
-        await c.message.edit_text("⚙️ QUẢN LÝ THƯ MỤC\\nĐã cập nhật trạng thái:", reply_markup=await folders_kb())
-    await c.answer("Đã đổi trạng thái.")
+    cancel = f"afchildren:{parent}" if parent else "a:folders"
+    await c.message.edit_text(
+        f"⚠️ XÁC NHẬN THAY ĐỔI\\n\\nThư mục: {shown}\\nTrạng thái mới: {'🟢 BẬT' if not current else '🔴 TẮT'}\\n\\nBạn xác nhận cập nhật mục này?",
+        reply_markup=kb([("✅ XÁC NHẬN", "afconfirm:yes"), ("❌ HỦY", "afconfirm:no"), ("⬅️ QUAY LẠI", cancel)])
+    )
+    await c.answer()
 
 @dp.callback_query(F.data.startswith("a:"))
 async def admin_actions(c: CallbackQuery):
