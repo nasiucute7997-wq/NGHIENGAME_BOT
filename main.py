@@ -220,6 +220,15 @@ async def child_folders_kb(parent):
         enabled = await folder_is_on(key)
         shown = await folder_label(key, label)
         b.button(text=f"🎮 {shown}"[:64], callback_data=f"afselect:{key}")
+    if parent == "home_code":
+        for key, label in [
+            ("home_codegame", "CODE GAME"),
+            ("home_share", "CODE SHARE"),
+            ("home_mini", "MINIGAME LIVE"),
+        ]:
+            enabled = await folder_is_on(key)
+            state_label = "🟢 ĐANG BẬT" if enabled else "🔴 ĐANG TẮT"
+            b.button(text=f"{state_label} · {label}", callback_data=f"af:{key}")
     if parent == "home_codegame":
         b.button(text="➕ THÊM SITE GAME", callback_data="afaddcodesite")
     elif parent == "home_mini":
