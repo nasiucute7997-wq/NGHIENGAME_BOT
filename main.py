@@ -495,21 +495,7 @@ async def buy(c: CallbackQuery):
     if not p: return await c.answer("Sản phẩm không còn khả dụng.",show_alert=True)
     unit_price = 10000 if p[0] == "GAME" else p[3]
     pending[c.from_user.id]={"product_id":pid,"category":p[0],"game":p[1],"name":p[2],"unit_price":unit_price,"price":unit_price}
-    if p[1] == "XX8":
-        prompt = (
-            f"**Chọn sản phẩm:**\\n\\n• {p[2]}:\\n"
-            "Nhận đủ 250 điểm theo combo.\\n"
-            "• Không nhận đủ điểm, liên hệ CSKH để kiểm tra và hoàn tiền.\\n\\n"
-            "👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\n"
-            "• Mỗi dòng 01 tài khoản.\\n"
-            "Ví dụ:\\nabcxyz\\n\\n"
-            "⚠️ ĐIỀU KIỆN BẮT BUỘC:\\n"
-            "• Tài khoản phải có lịch sử nạp TRÊN 500.000Đ trong 07 ngày trước khi mua MINIGAME.\\n"
-            "• Trúng thưởng nhưng không đủ điều kiện nạp sẽ KHÔNG ĐƯỢC NHẬN THƯỞNG.\\n\\n"
-            "❗ Vui lòng kiểm tra tài khoản và điều kiện trước khi đặt mua!"
-        )
-    else:
-        prompt = "👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\n• Mỗi dòng 01 tài khoản.\\nVí dụ:\\nabcxyz"
+    prompt = "👤 NHẬP TÊN TÀI KHOẢN GAME CẦN MUA:\\n• Mỗi dòng 01 tài khoản.\\nVí dụ:\\nabcxyz"
     await c.message.answer(prompt,reply_markup=kb([("❌ HỦY ĐẶT HÀNG","buyact:cancel")]))
     await c.answer()
 
