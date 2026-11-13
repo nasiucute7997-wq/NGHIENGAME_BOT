@@ -154,21 +154,23 @@ async def admin_kb():
     return b.as_markup()
 
 CHILD_FOLDER_KEYS = {
+    "home_code": ["home_codegame", "home_mini", "home_share"],
+    "home_services": ["service_sms_receive", "service_sms_send", "service_proxy"],
     "home_codegame": [f"game_{g}" for g in GAMES],
     "home_mini": ["mini_XX8", "mini_AD88", "mini_U888", "mini_88CLB"],
     "home_share": ["share_QQ88", "share_HI88"],
 }
 
 async def folders_kb():
+    # Menu gốc chỉ hiển thị đúng 2 nhóm lớn: CODE và DỊCH VỤ KHÁC.
     b = InlineKeyboardBuilder()
-    for key, label, group in FOLDER_DEFS:
-        if key.startswith(("game_", "mini_", "share_")):
-            continue
-        enabled = await folder_is_on(key)
-        shown = await folder_label(key, label)
-        b.button(text=f"{'🟢 ON' if enabled else '🔴 OFF'} | {shown}"[:64], callback_data=f"af:{key}")
-        config_callback = f"afchildren:{key}" if key in CHILD_FOLDER_KEYS else f"afe:{key}"
-        b.button(text=f"⚙️ CÀI ĐẶT | {shown}"[:64], callback_data=config_callback)
+    for key, default_label in [
+        ("home_code", "🚀 CODE"),
+        ("home_services", "🛠 DỊCH VỤ KHÁC"),
+    ]:
+        if await folder_is_on(key):
+            shown = await folder_label(key, default_label)
+            b.button(text=shown[:64], callback_data=f"afchildren:{key}")
     b.button(text="🔄 TẢI LẠI", callback_data="a:folders")
     b.button(text="⬅️ QUAY LẠI MENU ADMIN", callback_data="a:refresh")
     b.adjust(2)
