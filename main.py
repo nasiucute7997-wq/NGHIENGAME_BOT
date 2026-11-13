@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import html
 import logging
 import os
 import re
@@ -346,9 +347,16 @@ async def page_products(message, category, game=""):
         if category == "MINIGAME LIVE":
             extra = "\\n\\n" + await setting("minigame_text","Admin chưa cập nhật chi tiết/thể lệ cho minigame này.")
         await message.edit_text("Hiện chưa có sản phẩm được mở bán hoặc Admin chưa cấu hình giá."+extra,reply_markup=kb([("⬅️ QUAY LẠI",back_to)])); return
-    details = "\\n".join([f"• {name}: {desc}" for _,name,price,desc in rows if desc])
-    body = "Chọn sản phẩm:" + (f"\\n\\n{details}" if details else "")
-    await message.edit_text(body,reply_markup=kb2([(f"{n} — {p:,}đ",f"buy:{i}") for i,n,p,desc in rows]+[("⬅️ QUAY LẠI",back_to)]))
+    details = "\\n".join(
+        f"• <b>{html.escape(str(name))}</b>: {html.escape(str(desc or '').replace('\\\\n', '\\n'))}"
+        for _, name, price, desc in rows if desc
+    )
+    body = "<b>Chọn sản phẩm:</b>" + (f"\\n\\n{details}" if details else "")
+    await message.edit_text(
+        body,
+        parse_mode="HTML",
+        reply_markup=kb2([(f"{n} — {p:,}đ", f"buy:{i}") for i, n, p, desc in rows] + [("⬅️ QUAY LẠI", back_to)])
+    )
 
 @dp.message(CommandStart())
 async def start(m: Message):
