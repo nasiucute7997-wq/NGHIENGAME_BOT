@@ -676,13 +676,29 @@ async def admin_select_folder_for_config(c: CallbackQuery):
                 cur = await db.execute("SELECT id,name,price,active FROM products WHERE category=? ORDER BY id", (category,))
             products = await cur.fetchall()
         buttons = [(f"📦 {name} · {price:,}đ {'🟢' if active else '🔴'}", f"afproduct:{pid}:{key}") for pid,name,price,active in products]
+        if key.startswith("mini_"):
+            buttons.append(("➕ THÊM SẢN PHẨM", f"afaddmini:{game}"))
         if not products:
-            buttons = [("⚙️ CÀI ĐẶT TÊN THƯ MỤC", f"afe:{key}")]
+            buttons.append(("⚙️ CÀI ĐẶT TÊN THƯ MỤC", f"afe:{key}"))
         parent = next((p for p, children in CHILD_FOLDER_KEYS.items() if key in children), "home_code")
         buttons.append(("⬅️ DANH SÁCH THƯ MỤC", f"afchildren:{parent}"))
         await c.message.edit_text(f"📂 {title}\\n\\nDanh sách sản phẩm/site đã có. Chọn mục cần chỉnh sửa:", reply_markup=kb2(buttons))
     else:
         await c.message.edit_text(f"⚙️ CÀI ĐẶT {title}\\nChọn nội dung cần chỉnh sửa:", reply_markup=await folder_config_kb(key))
+    await c.answer()
+
+@dp.callback_query(F.data.startswith("afaddmini:"))
+async def admin_add_product_from_minigame_folder(c: CallbackQuery):
+    if c.from_user.id not in ADMINS:
+        return await c.answer("Không có quyền.", show_alert=True)
+    game_name = c.data.split(":", 1)[1]
+    if game_name not in {"XX8", "U888", "88CLB"}:
+        return await c.answer("Minigame không hợp lệ.", show_alert=True)
+    pending[c.from_user.id] = {"add_stage": "name", "category": "MINIGAME LIVE", "game": game_name}
+    await c.message.edit_text(
+        f"➕ THÊM SẢN PHẨM\\nDanh mục: MINIGAME LIVE\\nGame/site: {game_name}\\nNhập tên sản phẩm:",
+        reply_markup=kb([("⬅️ QUAY LẠI DANH SÁCH SẢN PHẨM", f"afselect:mini_{game_name}")])
+    )
     await c.answer()
 
 @dp.callback_query(F.data.startswith("afproduct:"))
