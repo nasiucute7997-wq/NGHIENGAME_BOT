@@ -139,7 +139,6 @@ async def home_kb(is_admin=False):
         ("home_account", "👤 TÀI KHOẢN", "m:account"),
         ("home_orders", "📋 LỊCH SỬ ĐƠN", "m:orders"),
         ("home_contact", "📞 LIÊN HỆ ADMIN", "m:contact"),
-        ("home_houses", "🏦 HỆ THỐNG NHÀ CÁI", "m:houses")
     ]
     for key, label, data in items:
         if await folder_is_on(key):
