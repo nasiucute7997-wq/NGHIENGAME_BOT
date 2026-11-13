@@ -408,8 +408,8 @@ async def menus(c: CallbackQuery):
     elif key=="deposit":
         pending[c.from_user.id]="deposit"
         qr=await setting("qr_file_id")
-        detail=await setting("payment_text","🏦 NGÂN HÀNG: ACB\\n👤 CHỦ TÀI KHOẢN: BUI HOANG YEN LINH\\n💳 SỐ TÀI KHOẢN: 28682791\\n\\nQuét mã QR bên dưới để chuyển khoản nạp số dư vào bot.")
-        text="💳 NẠP TIỀN\n"+detail+"\n\nNhập số tiền muốn nạp (VNĐ)."
+        detail=f"🏦 NGÂN HÀNG: ACB\n👤 CHỦ TÀI KHOẢN: BUI HOANG YEN LINH\n💳 SỐ TÀI KHOẢN: 28682791\n\nQuét mã QR bên dưới để chuyển khoản nạp số dư vào bot.\n\n📝 NỘI DUNG CHUYỂN KHOẢN: {c.from_user.id}"
+        text="💳 NẠP TIỀN\n\n"+detail+"\n\nNhập số tiền muốn nạp (VNĐ)."
         if qr:
             try: await c.message.answer_photo(qr,caption=text,reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
             except Exception: await c.message.answer(text,reply_markup=kb([("⬅️ MENU CHÍNH","m:home")]))
