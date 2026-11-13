@@ -81,7 +81,20 @@ async def init_db():
             "❗ Vui lòng kiểm tra kỹ tài khoản và điều kiện trước khi đặt mua!"
         )
         minigame_descriptions = {
-            "XX8": "Nhận đủ 250 điểm theo combo." + common_rules,
+            "XX8": (
+                "🎮 **XX8 — GÓI 250 ĐIỂM**\n"
+                "Nhận đủ **250 điểm** theo combo.\n\n"
+                "👤 **NHẬP TÊN TÀI KHOẢN GAME:**\n"
+                "• Mỗi dòng 01 tài khoản.\n\n"
+                "**Ví dụ:**\n"
+                "abcxyz\n"
+                "nguyenvana\n\n"
+                "⚠️ **ĐIỀU KIỆN:**\n"
+                "• Tài khoản phải có lịch sử nạp **trên 500.000đ trong 07 ngày trước khi mua**.\n"
+                "• Không đủ điều kiện nạp sẽ **không được nhận thưởng**.\n"
+                "• Không nhận đủ điểm, vui lòng liên hệ CSKH để kiểm tra và hoàn tiền.\n\n"
+                "❗ Vui lòng kiểm tra kỹ tài khoản và điều kiện trước khi đặt mua!"
+            ),
             "88CLB": "Nhận đủ 174 điểm theo combo." + common_rules,
             "U888": "Nhận CODE ngẫu nhiên 118–288 điểm theo combo (không được lựa chọn mức điểm)." + common_rules,
         }
@@ -347,8 +360,13 @@ async def page_products(message, category, game=""):
         if category == "MINIGAME LIVE":
             extra = "\\n\\n" + await setting("minigame_text","Admin chưa cập nhật chi tiết/thể lệ cho minigame này.")
         await message.edit_text("Hiện chưa có sản phẩm được mở bán hoặc Admin chưa cấu hình giá."+extra,reply_markup=kb([("⬅️ QUAY LẠI",back_to)])); return
-    details = "\\n".join(
-        f"• <b>{html.escape(str(name))}</b>: {html.escape(str(desc or '').replace('\\\\n', '\\n'))}"
+    def format_product_description(value):
+        value = str(value or "").replace("\\n", "\n")
+        escaped = html.escape(value)
+        return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped, flags=re.S)
+
+    details = "\n".join(
+        f"• <b>{html.escape(str(name))}</b>:\n{format_product_description(desc)}"
         for _, name, price, desc in rows if desc
     )
     body = "<b>Chọn sản phẩm:</b>" + (f"\\n\\n{details}" if details else "")
