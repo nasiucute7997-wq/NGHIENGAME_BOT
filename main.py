@@ -38,9 +38,13 @@ async def init_db():
             await db.execute("ALTER TABLE products ADD COLUMN description TEXT DEFAULT ''")
         except Exception:
             pass
+        # Xóa dữ liệu cũ trong MINIGAME LIVE đúng một lần; giữ nguyên thư mục chính.
+        cur = await db.execute("SELECT value FROM settings WHERE key='migration:minigame_live_cleared_v1'")
+        if not await cur.fetchone():
+            await db.execute("DELETE FROM products WHERE category='MINIGAME LIVE'")
+            await db.execute("DELETE FROM settings WHERE key='minigame_text' OR key LIKE 'folder_label:mini_%' OR key LIKE 'folder:mini_%'")
+            await db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('migration:minigame_live_cleared_v1','1')")
         defaults = [
-            ("MINIGAME LIVE","XX8","MINIGAME XX8",65000,"Minigame LIVE XX8"),
-            ("MINIGAME LIVE","88CLB","MINIGAME 88CLB",60000,"Minigame LIVE 88CLB"),
             ("SHARE","","SHARE QQ88",50000,"Chương trình CODE SHARE QQ88"),
             ("SHARE","","SHARE HI88",60000,"Chương trình CODE SHARE HI88"),
         ]
@@ -157,7 +161,7 @@ CHILD_FOLDER_KEYS = {
     "home_code": ["home_codegame", "home_mini", "home_share"],
     "home_services": ["service_sms_receive", "service_sms_send", "service_proxy"],
     "home_codegame": [f"game_{g}" for g in GAMES],
-    "home_mini": ["mini_XX8", "mini_AD88", "mini_U888", "mini_88CLB"],
+    "home_mini": [],
     "home_share": ["share_QQ88", "share_HI88"],
 }
 
@@ -337,9 +341,10 @@ async def menus(c: CallbackQuery):
         game_rows=[(await folder_label(f"game_{g}",g),f"game:{g}") for g in GAMES if await folder_is_on(f"game_{g}")]
         await c.message.edit_text((await folder_label("home_codegame","🎮 CODE GAME"))+"\n\nChọn game:",reply_markup=kb2(game_rows+[("⬅️ QUAY LẠI","m:code")]))
     elif key=="mini":
-        rows=[(await folder_label(f"mini_{g}",f"🎯 MINIGAME {g}"),f"miniitem:{g}") for g in ["XX8","AD88","U888","88CLB"] if await folder_is_on(f"mini_{g}")]
-        rows.append(("⬅️ QUAY LẠI","m:code"))
-        await c.message.edit_text((await folder_label("home_mini","🎯 MINIGAME LIVE"))+"\n\nChọn minigame:",reply_markup=kb2(rows))
+        await c.message.edit_text(
+            (await folder_label("home_mini","🎯 MINIGAME LIVE"))+"\\n\\nHiện chưa có sản phẩm hoặc nội dung nào.",
+            reply_markup=kb2([("⬅️ QUAY LẠI","m:code")])
+        )
     elif key=="share":
         share_rows=[]
         if await folder_is_on("share_QQ88"):
