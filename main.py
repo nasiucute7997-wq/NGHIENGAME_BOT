@@ -285,15 +285,25 @@ async def start(m: Message):
             cur=await db.execute("SELECT blocked FROM users WHERE id=?",(m.from_user.id,)); blocked=(await cur.fetchone())[0]
         if blocked:
             return await m.answer("🚫 Tài khoản của bạn hiện đang bị khóa. Vui lòng liên hệ Admin.")
-    welcome = (f"━━━━━━━━━━━━━━━━━━━━\\n"
-               f"🌟🎉 XIN CHÀO, {m.from_user.full_name}! 🎉🌟\\n\\n"
-               "💎 CHÀO MỪNG BẠN ĐẾN VỚI NGHIỆN CODE 💎\\n\\n"
-               "🎮 CODE GAME HOT – MINIGAME LIVE\\n\\n"
-               "⚡ GIAO DỊCH NHANH – THAO TÁC TIỆN LỢI\\n\\n"
-               "🤖 HỆ THỐNG TỰ ĐỘNG – HỖ TRỢ 24/7\\n\\n"
-               "━━━━━━━━━━━━━━━━━━━━\\n\\n"
-               "🚀 BẠN MUỐN SỬ DỤNG DỊCH VỤ NÀO? 👇👇\\n"
-               "━━━━━━━━━━━━━━━━━━━━")
+    now = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
+    weekdays = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
+    date_text = f"{weekdays[now.weekday()]}, ngày {now:%d/%m/%Y}"
+    time_text = now.strftime("%H:%M:%S")
+    welcome = (
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🌟🎉 XIN CHÀO, {m.from_user.full_name}! 🎉🌟\n"
+        "💎 CHÀO MỪNG BẠN ĐẾN VỚI NGHIỆN CODE 💎\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📅 HÔM NAY: {date_text}\n"
+        f"⏰ THỜI GIAN: {time_text} (GMT+7)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🎮 CODE GAME HOT – MINIGAME LIVE\n"
+        "⚡ GIAO DỊCH NHANH – THAO TÁC TIỆN LỢI\n"
+        "🤖 HỆ THỐNG TỰ ĐỘNG – HỖ TRỢ 24/7\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🚀 BẠN MUỐN SỬ DỤNG DỊCH VỤ NÀO? 👇\n"
+        "Vui lòng chọn chức năng bên dưới để tiếp tục."
+    )
     await m.answer(welcome,reply_markup=await home_kb(m.from_user.id in ADMINS))
 
 @dp.message(Command("admin"))
