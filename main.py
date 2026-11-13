@@ -642,9 +642,9 @@ async def admin_select_folder_product(c: CallbackQuery):
         return await c.answer("Không tìm thấy sản phẩm.", show_alert=True)
     name, description, price, active = row
     buttons = [
-        (f"✏️ SỬA TÊN: {name}"[:60], f"cfgprod:name:{pid}:{key}"),
-        ("📝 SỬA NỘI DUNG / MÔ TẢ", f"cfgprod:description:{pid}:{key}"),
-        (f"💵 SỬA GIÁ: {price:,}đ", f"cfgprod:price:{pid}:{key}"),
+        (f"✏️ SỬA TÊN: {name}"[:60], f"apf:{pid}:name"),
+        ("📝 SỬA NỘI DUNG / MÔ TẢ", f"apf:{pid}:description"),
+        (f"💵 SỬA GIÁ: {price:,}đ", f"apf:{pid}:price"),
         (("🔴 TẮT SẢN PHẨM" if active else "🟢 BẬT SẢN PHẨM"), f"at:{pid}"),
         ("⬅️ DANH SÁCH SITE / SẢN PHẨM", f"afselect:{key}")
     ]
